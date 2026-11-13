@@ -27,6 +27,10 @@ export interface ConversationSummary {
   title: string;
   createdAt: number;
   updatedAt: number;
+  /** 加入错题本。 */
+  starred: boolean;
+  /** 错题笔记：错因、要点。 */
+  note: string;
 }
 
 export interface SceneRecord {

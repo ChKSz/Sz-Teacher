@@ -65,8 +65,8 @@ export const api = {
 
   conversations: () => request<ConversationSummary[]>('/api/conversations'),
   conversation: (id: string) => request<ConversationDetail>(`/api/conversations/${encodeURIComponent(id)}`),
-  renameConversation: (id: string, title: string) =>
-    request(`/api/conversations/${encodeURIComponent(id)}`, { method: 'PATCH', json: { title } }),
+  updateConversation: (id: string, patch: { title?: string; starred?: boolean; note?: string }) =>
+    request(`/api/conversations/${encodeURIComponent(id)}`, { method: 'PATCH', json: patch }),
   deleteConversation: (id: string) =>
     request(`/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 };

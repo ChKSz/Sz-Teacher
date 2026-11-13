@@ -94,6 +94,29 @@ test('设置密码 → 提问 → 流式回答 → 追问 → 刷新后记录还
   await page.reload();
   await page.locator('.msg.assistant .scene-player').first().waitFor();
 
+  // 在讲解某一步点"这步没懂"，自动发出带步骤内容的追问
+  const before = await page.locator('.msg.user').count();
+  await page.getByRole('tab', { name: '第 4 步' }).first().click();
+  await page.getByRole('button', { name: '🙋 这步没懂' }).first().click();
+  await page.locator('.msg.user').nth(before).waitFor();
+  const askText = await page.locator('.msg.user').nth(before).innerText();
+  assert.match(askText, /第 4 步/);
+  assert.match(askText, /PB=BC/);
+  await page.locator('.msg.assistant').nth(before).locator('.msg-actions').waitFor();
+
+  // 错题本：收藏 + 笔记，侧边栏筛选
+  await page.getByRole('button', { name: '加入错题本' }).click();
+  await page.getByRole('button', { name: '移出错题本' }).waitFor();
+  await page.getByRole('button', { name: '错题笔记' }).click();
+  await page.getByRole('textbox', { name: '错题笔记' }).fill('漏了 P 与 B 重合的情况');
+  await page.getByRole('button', { name: '保存笔记' }).click();
+  await page.locator('.note-text', { hasText: '漏了 P 与 B 重合的情况' }).waitFor();
+  await page.getByRole('tab', { name: /错题本/ }).click();
+  await page.locator('.conv-item .star-mark').first().waitFor();
+  await page.reload();
+  await page.locator('.note-text', { hasText: '漏了 P 与 B 重合的情况' }).waitFor();
+  await page.screenshot({ path: path.join(SHOT_DIR, '2c-notes.png') });
+
   // 设置面板：密钥打码、测试连接
   await page.getByRole('button', { name: '设置' }).click();
   const keyInput = page.getByPlaceholder(/已保存 sk-…3456/);

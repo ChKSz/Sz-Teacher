@@ -938,3 +938,75 @@ textarea:focus {
   font-size: 0.85rem;
   color: var(--warn);
 }
+.ask-btn {
+  flex: none;
+  align-self: center;
+  border: 1px solid #f0d49a;
+  background: #fff9ec;
+  color: #8a5a00;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.ask-btn:hover {
+  background: #fff1d1;
+}
+
+/* ---------- 错题本 ---------- */
+.conv-filter {
+  display: flex;
+  gap: 6px;
+  padding: 0 12px 8px;
+}
+.conv-search {
+  margin: 0 12px 8px;
+  width: calc(100% - 24px) !important;
+  padding: 6px 10px !important;
+  font-size: 0.88rem;
+}
+.star-mark {
+  color: #e8a90c;
+}
+.star-btn {
+  color: #b8bfcc;
+  font-size: 1.3rem;
+}
+.star-btn.on {
+  color: #e8a90c;
+}
+.icon-btn.active {
+  background: var(--primary-soft);
+}
+.note-bar {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  background: #fffbea;
+  border-bottom: 1px solid #f3e3a6;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 0.92rem;
+}
+.note-bar.editing {
+  flex-direction: column;
+  align-items: stretch;
+  cursor: default;
+}
+.note-label {
+  flex: none;
+  color: #8a6d00;
+  font-weight: 600;
+}
+.note-text {
+  white-space: pre-wrap;
+  color: #5c4a00;
+}
+.user-md .markdown blockquote {
+  background: rgba(255, 255, 255, 0.15);
+  border-left-color: rgba(255, 255, 255, 0.7);
+  color: #fff;
+}
+.user-md .markdown code {
+  background: rgba(255, 255, 255, 0.2);
+}

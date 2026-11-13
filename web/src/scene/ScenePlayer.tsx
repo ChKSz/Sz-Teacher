@@ -11,6 +11,8 @@ interface Props {
   tts: { rate: number; voice: string };
   /** 验算结果提示（来自服务器）。 */
   verified?: boolean | null;
+  /** 对当前步骤追问；不提供时不显示追问按钮。 */
+  onAsk?: (stepNo: number, stepText: string) => void;
 }
 
 /**
@@ -19,7 +21,7 @@ interface Props {
  * - 自动播放时，动画和朗读都结束后进入下一步。
  * - 任何时候都可以拖动参数滑块"自己试试"，按下一步时恢复剧本状态。
  */
-export function ScenePlayer({ scene, tts, verified }: Props) {
+export function ScenePlayer({ scene, tts, verified, onAsk }: Props) {
   const timeline = useMemo(() => buildTimeline(scene), [scene]);
   const [stepIndex, setStepIndex] = useState(-1);
   const [params, setParams] = useState<Record<string, number>>(() => defaultParams(scene));
@@ -196,6 +198,19 @@ export function ScenePlayer({ scene, tts, verified }: Props) {
               第 {stepIndex + 1}/{scene.steps.length} 步
             </span>
             <div className="markdown" dangerouslySetInnerHTML={{ __html: stepHtml }} />
+            {onAsk && step && (
+              <button
+                className="ask-btn"
+                onClick={() => {
+                  setPlaying(false);
+                  stopMedia();
+                  onAsk(stepIndex + 1, step.text ?? step.say);
+                }}
+                title="就这一步提问"
+              >
+                🙋 这步没懂
+              </button>
+            )}
           </>
         ) : (
           <span className="muted">点 ▶ 开始讲解，也可以拖动下面的滑块自己观察。</span>

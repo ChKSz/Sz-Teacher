@@ -8,6 +8,8 @@ interface ConversationRow {
   title: string;
   created_at: number;
   updated_at: number;
+  starred: number;
+  note: string;
 }
 
 interface MessageRow {
@@ -24,7 +26,14 @@ export function newId(): string {
 }
 
 function toSummary(row: ConversationRow): ConversationSummary {
-  return { id: row.id, title: row.title, createdAt: row.created_at, updatedAt: row.updated_at };
+  return {
+    id: row.id,
+    title: row.title,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    starred: row.starred === 1,
+    note: row.note,
+  };
 }
 
 function toMessage(row: MessageRow): Message {
@@ -40,13 +49,13 @@ function toMessage(row: MessageRow): Message {
 
 export function listConversations(db: Db): ConversationSummary[] {
   const rows = db
-    .prepare('SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC')
+    .prepare('SELECT id, title, created_at, updated_at, starred, note FROM conversations ORDER BY updated_at DESC')
     .all() as unknown as ConversationRow[];
   return rows.map(toSummary);
 }
 
 export function getConversation(db: Db, id: string): ConversationDetail | null {
-  const row = db.prepare('SELECT id, title, created_at, updated_at FROM conversations WHERE id = ?').get(id) as
+  const row = db.prepare('SELECT id, title, created_at, updated_at, starred, note FROM conversations WHERE id = ?').get(id) as
     | ConversationRow
     | undefined;
   if (!row) return null;
@@ -133,11 +142,30 @@ export function createConversation(db: Db, title: string, now = Date.now()): Con
     now,
     now,
   );
-  return { id, title, createdAt: now, updatedAt: now };
+  return { id, title, createdAt: now, updatedAt: now, starred: false, note: '' };
 }
 
-export function renameConversation(db: Db, id: string, title: string): boolean {
-  const result = db.prepare('UPDATE conversations SET title = ? WHERE id = ?').run(title, id);
+export function updateConversation(
+  db: Db,
+  id: string,
+  patch: { title?: string; starred?: boolean; note?: string },
+): boolean {
+  const fields: string[] = [];
+  const values: (string | number)[] = [];
+  if (patch.title !== undefined) {
+    fields.push('title = ?');
+    values.push(patch.title);
+  }
+  if (patch.starred !== undefined) {
+    fields.push('starred = ?');
+    values.push(patch.starred ? 1 : 0);
+  }
+  if (patch.note !== undefined) {
+    fields.push('note = ?');
+    values.push(patch.note);
+  }
+  if (fields.length === 0) return getConversation(db, id) !== null;
+  const result = db.prepare(`UPDATE conversations SET ${fields.join(', ')} WHERE id = ?`).run(...values, id);
   return Number(result.changes) === 1;
 }
 

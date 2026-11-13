@@ -9,6 +9,7 @@ export function SceneSection(props: {
   record: SceneRecord | undefined;
   settings: PublicSettings | null;
   onRecord: (record: SceneRecord) => void;
+  onAsk?: (stepNo: number, stepText: string) => void;
 }) {
   const [status, setStatus] = useState<'idle' | 'working' | 'error'>('idle');
   const [progress, setProgress] = useState('');
@@ -85,7 +86,7 @@ export function SceneSection(props: {
             ↻ 重新生成
           </button>
         </div>
-        {open && <ScenePlayer scene={props.record.scene} tts={tts} verified={props.record.verified} />}
+        {open && <ScenePlayer scene={props.record.scene} tts={tts} verified={props.record.verified} onAsk={props.onAsk} />}
         {open && !props.record.verified && props.record.problems.length > 0 && (
           <details className="scene-problems">
             <summary>验算未通过的地方</summary>

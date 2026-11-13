@@ -228,10 +228,22 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
   });
 
   app.patch('/api/conversations/:id', async (c) => {
-    const body = await readJson<{ title?: unknown }>(c);
-    const title = typeof body.title === 'string' ? body.title.trim().slice(0, 100) : '';
-    if (!title) throw new HttpError(400, '标题不能为空');
-    if (!store.renameConversation(db, c.req.param('id'), title)) throw new HttpError(404, '会话不存在');
+    const body = await readJson<{ title?: unknown; starred?: unknown; note?: unknown }>(c);
+    const patch: { title?: string; starred?: boolean; note?: string } = {};
+    if (body.title !== undefined) {
+      const title = typeof body.title === 'string' ? body.title.trim().slice(0, 100) : '';
+      if (!title) throw new HttpError(400, '标题不能为空');
+      patch.title = title;
+    }
+    if (body.starred !== undefined) {
+      if (typeof body.starred !== 'boolean') throw new HttpError(400, 'starred 必须是 true 或 false');
+      patch.starred = body.starred;
+    }
+    if (body.note !== undefined) {
+      if (typeof body.note !== 'string') throw new HttpError(400, '笔记必须是文字');
+      patch.note = body.note.slice(0, 5000);
+    }
+    if (!store.updateConversation(db, c.req.param('id'), patch)) throw new HttpError(404, '会话不存在');
     return c.json({ ok: true });
   });
 

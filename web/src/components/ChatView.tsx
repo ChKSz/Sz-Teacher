@@ -34,14 +34,25 @@ function SpeakButton({ text, settings }: { text: string; settings: PublicSetting
   );
 }
 
+/** 学生在动画讲解某一步点"这步没懂"时发出的追问。 */
+export function stepQuestion(stepNo: number, stepText: string): string {
+  const quoted = stepText.replace(/\s*\n\s*/g, ' ').trim();
+  return `关于动画讲解的第 ${stepNo} 步：\n> ${quoted}\n\n这一步我没看懂，能换个方式再讲讲吗？`;
+}
+
 function MessageItem({
   message,
   settings,
   onScene,
+  onAsk,
+  sceneable,
 }: {
   message: Message;
   settings: PublicSettings | null;
   onScene: (messageId: string, record: SceneRecord) => void;
+  onAsk?: (text: string) => void;
+  /** 是否提供"生成动画讲解"（首个完整解答或较长的回答）。 */
+  sceneable: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   if (message.role === 'user') {
@@ -57,7 +68,14 @@ function MessageItem({
               ))}
             </div>
           )}
-          {message.content && <div className="user-text">{message.content}</div>}
+          {message.content &&
+            (/[$>*]/.test(message.content) ? (
+              <div className="user-text user-md">
+                <Markdown text={message.content} />
+              </div>
+            ) : (
+              <div className="user-text">{message.content}</div>
+            ))}
         </div>
       </div>
     );
@@ -81,12 +99,13 @@ function MessageItem({
             {copied ? '✓ 已复制' : '📋 复制'}
           </button>
         </div>
-        {message.status === 'done' && (
+        {message.status === 'done' && (sceneable || message.scene) && (
           <SceneSection
             messageId={message.id}
             record={message.scene}
             settings={settings}
             onRecord={(record) => onScene(message.id, record)}
+            onAsk={onAsk ? (no, text) => onAsk(stepQuestion(no, text)) : undefined}
           />
         )}
       </div>
@@ -101,6 +120,7 @@ export function ChatView(props: {
   providerReady: boolean;
   onNeedSettings: () => void;
   onScene: (messageId: string, record: SceneRecord) => void;
+  onAsk?: (text: string) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -140,8 +160,15 @@ export function ChatView(props: {
   return (
     <div className="chat-scroll" ref={scrollerRef} onScroll={onScroll}>
       <div className="chat-inner">
-        {props.messages.map((m) => (
-          <MessageItem key={m.id} message={m} settings={props.settings} onScene={props.onScene} />
+        {props.messages.map((m, i) => (
+          <MessageItem
+            key={m.id}
+            message={m}
+            settings={props.settings}
+            onScene={props.onScene}
+            onAsk={props.streaming ? undefined : props.onAsk}
+            sceneable={m.role === 'assistant' && (props.messages.findIndex((x) => x.role === 'assistant') === i || m.content.length > 600)}
+          />
         ))}
         {props.streaming && (
           <div className="msg assistant streaming">

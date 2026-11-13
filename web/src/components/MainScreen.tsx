@@ -5,6 +5,7 @@ import { ChatView } from './ChatView.tsx';
 import { Composer } from './Composer.tsx';
 import { SettingsPanel } from './SettingsPanel.tsx';
 import { DemoGallery } from '../scene/DemoGallery.tsx';
+import { NoteBar } from './NoteBar.tsx';
 import type { ConversationDetail, ConversationSummary, Message, PublicSettings } from '../../../shared/types.ts';
 
 /** 当前会话 ID 保存在地址栏 #c=<id>，刷新和分享链接后仍能回到同一道题。 */
@@ -26,6 +27,7 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [showSettings, setShowSettings] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showDemo, setShowDemo] = useState(() => location.hash === '#demo');
+  const [showNote, setShowNote] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const loadList = useCallback(() => {
@@ -69,6 +71,7 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
     setError('');
     setCurrentId(id);
     setShowDemo(false);
+    setShowNote(false);
     setSidebarOpen(false);
   };
 
@@ -94,6 +97,8 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
                         title: '',
                         createdAt: event.userMessage.createdAt,
                         updatedAt: event.userMessage.createdAt,
+                        starred: false,
+                        note: '',
                         messages: [],
                       };
                 return { ...base, messages: [...base.messages, event.userMessage] };
@@ -151,15 +156,16 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
     }
   };
 
-  const rename = async (id: string, title: string) => {
+  const patchConversation = async (id: string, patch: { title?: string; starred?: boolean; note?: string }) => {
     try {
-      await api.renameConversation(id, title);
-      if (current?.id === id) setCurrent({ ...current, title });
-      loadList();
+      await api.updateConversation(id, patch);
+      setCurrent((prev) => (prev && prev.id === id ? { ...prev, ...patch } : prev));
+      setConversations((list) => list.map((c) => (c.id === id ? { ...c, ...patch } : c)));
     } catch (err) {
       setError((err as Error).message);
     }
   };
+  const rename = (id: string, title: string) => patchConversation(id, { title });
 
   const logout = async () => {
     await api.logout().catch(() => {});
@@ -189,10 +195,43 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
             ☰
           </button>
           <div className="topbar-title">{showDemo ? '示例讲解' : current?.title || '新的题目'}</div>
+          {!showDemo && current && (
+            <>
+              <button
+                className={`icon-btn star-btn ${current.starred ? 'on' : ''}`}
+                onClick={() => void patchConversation(current.id, { starred: !current.starred })}
+                aria-label={current.starred ? '移出错题本' : '加入错题本'}
+                title={current.starred ? '移出错题本' : '加入错题本'}
+              >
+                {current.starred ? '★' : '☆'}
+              </button>
+              <button
+                className={`icon-btn ${showNote ? 'active' : ''}`}
+                onClick={() => setShowNote(!showNote)}
+                aria-label="错题笔记"
+                title="错题笔记"
+              >
+                📝
+              </button>
+            </>
+          )}
           <button className="icon-btn" onClick={() => setShowSettings(true)} aria-label="设置" title="设置">
             ⚙
           </button>
         </header>
+        {!showDemo && current && (showNote || current.note) && (
+          <NoteBar
+            key={current.id}
+            note={current.note}
+            editing={showNote}
+            onEdit={() => setShowNote(true)}
+            onSave={(note) => {
+              void patchConversation(current.id, { note, ...(note && !current.starred ? { starred: true } : {}) });
+              setShowNote(false);
+            }}
+            onCancel={() => setShowNote(false)}
+          />
+        )}
         {showDemo ? (
           <DemoGallery tts={settings?.tts ?? { rate: 1, voice: '' }} onClose={() => setShowDemo(false)} />
         ) : (
@@ -201,6 +240,9 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
             streaming={streaming}
             settings={settings}
             onNeedSettings={() => setShowSettings(true)}
+            onAsk={(text) => {
+              void send(text, []).catch(() => {});
+            }}
             onScene={(messageId, record) =>
               setCurrent((prev) =>
                 prev ? { ...prev, messages: prev.messages.map((m) => (m.id === messageId ? { ...m, scene: record } : m)) } : prev,

@@ -46,6 +46,10 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX scenes_by_message ON scenes(message_id, created_at);
   `,
+  `
+  ALTER TABLE conversations ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE conversations ADD COLUMN note TEXT NOT NULL DEFAULT '';
+  `,
 ];
 
 export function openDb(file: string): Db {

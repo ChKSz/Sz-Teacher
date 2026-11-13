@@ -288,6 +288,20 @@ describe('解题对话', () => {
     expect(detail.title).toBe('动点题');
   });
 
+  it('错题本：收藏和笔记', async () => {
+    await setup();
+    const events = await readEvents(await t.request('/api/chat', { method: 'POST', json: { text: '题' } }));
+    const id = events[0]!.conversationId as string;
+    let list = (await (await t.request('/api/conversations')).json()) as ConversationSummary[];
+    expect(list[0]).toMatchObject({ starred: false, note: '' });
+    const res = await t.request(`/api/conversations/${id}`, { method: 'PATCH', json: { starred: true, note: '漏了重合的情况' } });
+    expect(res.status).toBe(200);
+    list = (await (await t.request('/api/conversations')).json()) as ConversationSummary[];
+    expect(list[0]).toMatchObject({ starred: true, note: '漏了重合的情况', title: '题' });
+    const bad = await t.request(`/api/conversations/${id}`, { method: 'PATCH', json: { starred: 'yes' } });
+    expect(bad.status).toBe(400);
+  });
+
   it('启发式风格使用不同的系统提示', async () => {
     await setup();
     await t.request('/api/settings', { method: 'PUT', json: { teachingStyle: 'hint-first' } });
