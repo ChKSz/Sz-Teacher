@@ -39,6 +39,8 @@ export async function generateScene(input: SceneGenInput): Promise<SceneGenResul
   /** 最好的候选：结构正确但验算未通过的剧本也可以先用。 */
   let fallback: { scene: Scene; problems: string[]; warnings: string[] } | null = null;
   let lastProblems: string[] = [];
+  /** 供应商不支持 response_format 时，之后的每一轮都不再发送。 */
+  let useJsonFormat = true;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     input.onProgress?.(attempt === 1 ? '正在设计动画讲解…' : `正在修正（第 ${attempt - 1} 次）…`);
@@ -48,13 +50,14 @@ export async function generateScene(input: SceneGenInput): Promise<SceneGenResul
         model: input.model,
         messages,
         reasoningEffort: input.reasoningEffort || undefined,
-        responseFormat: { type: 'json_object' },
+        responseFormat: useJsonFormat ? { type: 'json_object' } : undefined,
         signal: input.signal,
         timeoutMs: 420_000,
       });
     } catch (err) {
-      if (err instanceof LlmError && err.status === 400 && attempt === 1) {
+      if (err instanceof LlmError && err.status === 400 && useJsonFormat) {
         // 个别模型不支持 response_format，去掉再试
+        useJsonFormat = false;
         reply = await chat(input.provider, {
           model: input.model,
           messages,

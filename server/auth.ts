@@ -143,5 +143,10 @@ export class LoginLimiter {
     for (const [ip, entry] of this.failures) {
       if (entry.lockedUntil <= now && now - entry.firstAt > this.windowMs) this.failures.delete(ip);
     }
+    // 仍然太多时，丢弃最早的未锁定记录（Map 按插入顺序遍历）
+    for (const [ip, entry] of this.failures) {
+      if (this.failures.size <= 5_000) break;
+      if (entry.lockedUntil <= now) this.failures.delete(ip);
+    }
   }
 }

@@ -50,10 +50,12 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
 
   const clientIp = (c: Context): string => {
     if (config.trustProxy) {
-      const forwarded = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
-      if (forwarded) return forwarded;
+      // X-Real-IP 由 Nginx 用 $remote_addr 覆盖设置，客户端无法伪造；
+      // X-Forwarded-For 的前面几项可以被客户端随意填写，只能信任最后一项（由反向代理追加）。
       const real = c.req.header('x-real-ip')?.trim();
       if (real) return real;
+      const forwarded = c.req.header('x-forwarded-for')?.split(',').at(-1)?.trim();
+      if (forwarded) return forwarded;
     }
     try {
       return getConnInfo(c).remote.address ?? 'unknown';
@@ -86,7 +88,7 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
     if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
       const origin = c.req.header('origin');
       if (origin) {
-        const host = c.req.header('x-forwarded-host') ?? c.req.header('host');
+        const host = (config.trustProxy ? c.req.header('x-forwarded-host') : undefined) ?? c.req.header('host');
         let originHost = '';
         try {
           originHost = new URL(origin).host;
@@ -105,6 +107,10 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
     const status: AuthStatus = { initialized: auth.getPasswordHash(db) !== null, authenticated: isAuthed(c) };
     return c.json(status);
   });
+
+  // 登录相关接口的请求体很小，限制大小防止未登录的大请求占用内存
+  const smallBody = bodyLimit({ maxSize: 4096, onError: (c) => c.json({ error: '请求太大' }, 413) });
+  app.use('/api/auth/*', smallBody);
 
   app.post('/api/auth/setup', async (c) => {
     const body = await readJson<{ password?: unknown }>(c);
@@ -127,14 +133,13 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
     if (lockedMs > 0) {
       throw new HttpError(429, `密码错误次数太多，请 ${Math.ceil(lockedMs / 60_000)} 分钟后再试`);
     }
+    // 在任何 await 之前先记一次尝试：并发发送大量请求时，超过上限的请求会直接被锁定
+    limiter.recordFailure(ip);
     const body = await readJson<{ password?: unknown }>(c);
     const stored = auth.getPasswordHash(db);
     if (stored === null) throw new HttpError(409, '还没有设置密码');
     const ok = typeof body.password === 'string' && (await auth.verifyPassword(body.password, stored));
-    if (!ok) {
-      limiter.recordFailure(ip);
-      throw new HttpError(401, '密码不正确');
-    }
+    if (!ok) throw new HttpError(401, '密码不正确');
     limiter.recordSuccess(ip);
     auth.purgeExpiredSessions(db);
     issueSession(c);
@@ -195,10 +200,13 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
   app.post('/api/settings/test', async (c) => {
     const body = await readJson<{ baseUrl?: string; apiKey?: string; model?: string }>(c);
     const saved = loadSettings(db, config);
-    const provider = {
-      baseUrl: (body.baseUrl ?? saved.provider.baseUrl).trim().replace(/\/+$/, ''),
-      apiKey: body.apiKey?.trim() || saved.provider.apiKey,
-    };
+    const baseUrl = (body.baseUrl ?? saved.provider.baseUrl).trim().replace(/\/+$/, '');
+    const newKey = body.apiKey?.trim() ?? '';
+    // 已保存的密钥只能发往已保存的地址，防止通过"测试连接"把密钥发到别处
+    if (!newKey && baseUrl !== saved.provider.baseUrl) {
+      return c.json({ ok: false, message: '更换了 Base URL，请同时填写 API Key 再测试' } satisfies ProviderTestResult);
+    }
+    const provider = { baseUrl, apiKey: newKey || saved.provider.apiKey };
     const model = body.model?.trim() || saved.solveModel;
     const result: ProviderTestResult = { ok: false, message: '' };
     try {
@@ -348,13 +356,21 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
         // 学生中途关掉页面时，已经生成的部分仍然保存下来。
         if (stream.aborted && !failure) failure = '生成被中断';
         const content = failure ? (answer ? `${answer}\n\n> ⚠️ ${failure}` : failure) : answer;
-        const saved: Message = store.addMessage(db, finalConversationId, {
-          id: assistantMessageId,
-          role: 'assistant',
-          content,
-          images: [],
-          status: failure ? 'error' : 'done',
-        });
+        let saved: Message;
+        try {
+          saved = store.addMessage(db, finalConversationId, {
+            id: assistantMessageId,
+            role: 'assistant',
+            content,
+            images: [],
+            status: failure ? 'error' : 'done',
+          });
+        } catch (err) {
+          // 生成过程中会话被删除了
+          console.error(err);
+          if (!stream.aborted) await send({ type: 'error', message: '保存回答失败：这道题可能已被删除' });
+          return;
+        }
         if (!stream.aborted) {
           if (failure) await send({ type: 'error', message: failure });
           await send({ type: 'done', message: saved, title });

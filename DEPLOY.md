@@ -66,6 +66,8 @@ curl -s http://127.0.0.1:3000/api/auth/status   # 应返回 {"initialized":false
 2. 站点设置 → SSL → Let's Encrypt → 申请，并开启"强制 HTTPS"。
 3. 站点设置 → 配置文件，按 `deploy/nginx-site.conf` 加上反向代理配置，保存。
    **`proxy_buffering off` 一定要有**，否则解答不会边生成边显示。
+   `proxy_set_header X-Real-IP $remote_addr` 也必须有，程序靠它限制密码重试次数。
+   如果用宝塔的"反向代理"功能，"发送域名"要填 `$http_host`（不要填 127.0.0.1），否则登录会提示"拒绝跨站请求"。
 
 **建议在启动前**在 `.env` 里加一行 `INITIAL_PASSWORD=你的密码`：程序第一次启动时会用它设置密码，之后可以从 `.env` 删掉。不预设的话，浏览器第一次打开会让你设置密码，在你设置之前任何人打开网站都能抢先设置。
 
@@ -97,4 +99,5 @@ pm2 restart sz-teacher
 | 上传照片提示"请求太大" | Nginx 缺少 `client_max_body_size 40m` |
 | 设置里"测试连接"失败 | 服务器访问不到供应商，运行 `npm run probe` 看具体原因 |
 | 密码输错被锁 | 等 15 分钟；或 `pm2 restart sz-teacher` 立即解除 |
+| 登录提示"拒绝跨站请求" | Nginx 的 `Host` 头和浏览器地址不一致，按 `deploy/nginx-site.conf` 使用 `proxy_set_header Host $http_host` |
 | 忘记密码 | `node scripts/reset-password.ts`，然后重新打开网页设置新密码 |
