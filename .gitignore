@@ -1,0 +1,17 @@
+# 密钥与本机配置：绝不能进 Git
+.env
+.env.*
+!.env.example
+
+# 运行时数据：数据库、上传的图片
+data/
+
+# 用来测试的真题照片
+samples/
+
+# 依赖与构建产物
+node_modules/
+dist/
+release/
+
+*.log
