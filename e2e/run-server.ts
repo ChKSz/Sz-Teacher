@@ -8,10 +8,12 @@ import { startFakeProvider } from '../tests/helpers.ts';
 import { openDb } from '../server/db.ts';
 import { UploadStore } from '../server/uploads.ts';
 import { createApp } from '../server/app.ts';
+import { rectangleMovingPoint } from '../shared/scene/examples.ts';
 
 export async function startE2EServer() {
   const provider = await startFakeProvider();
   provider.reply = (body) => {
+    if (!body.stream && body.response_format) return JSON.stringify(rectangleMovingPoint);
     const messages = body.messages as { content: unknown }[];
     const last = JSON.stringify(messages.at(-1)?.content ?? '');
     if (last.includes('image_url')) return '我看到了图片里的题目。\n\n**答案：** $x=3$';

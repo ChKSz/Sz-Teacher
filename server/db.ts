@@ -35,6 +35,17 @@ const MIGRATIONS: string[] = [
   CREATE INDEX messages_by_conversation ON messages(conversation_id, created_at);
   CREATE INDEX conversations_by_update ON conversations(updated_at DESC);
   `,
+  `
+  CREATE TABLE scenes (
+    id          TEXT PRIMARY KEY,
+    message_id  TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    scene       TEXT NOT NULL,
+    verified    INTEGER NOT NULL,
+    problems    TEXT NOT NULL DEFAULT '[]',
+    created_at  INTEGER NOT NULL
+  );
+  CREATE INDEX scenes_by_message ON scenes(message_id, created_at);
+  `,
 ];
 
 export function openDb(file: string): Db {

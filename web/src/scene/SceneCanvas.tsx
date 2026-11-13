@@ -57,6 +57,27 @@ export function SceneCanvas({ scene, params, visible, highlighted }: Props) {
     return { x: ps.reduce((a, p) => a + p.x, 0) / ps.length, y: ps.reduce((a, p) => a + p.y, 0) / ps.length };
   }, [points]);
 
+  const labelSlots: { mid: Vec; nx: number; ny: number; text: string; color: string; opacity: number; key: string }[] = [];
+
+  // 位置重合的点只显示一个标签，写成 "P(E)"
+  const labelOwner = new Map<string, string>();
+  const mergedLabels = new Map<string, string[]>();
+  for (const o of scene.objects) {
+    if (!visible.has(o.id) || !isPointObject(o)) continue;
+    const c = objects.get(o.id);
+    if (c?.kind !== 'point') continue;
+    const label = o.label ?? o.id;
+    if (!label) continue;
+    const sp = T(c.p);
+    const key = `${Math.round(sp.x / 6)},${Math.round(sp.y / 6)}`;
+    const owner = labelOwner.get(key);
+    if (owner) mergedLabels.get(owner)!.push(label);
+    else {
+      labelOwner.set(key, o.id);
+      mergedLabels.set(o.id, [label]);
+    }
+  }
+
   for (const o of scene.objects) {
     if (!visible.has(o.id)) continue;
     const c = objects.get(o.id);
@@ -80,20 +101,27 @@ export function SceneCanvas({ scene, params, visible, highlighted }: Props) {
         layers.line.push(
           <line key={key} data-id={key} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={color} strokeWidth={width} strokeDasharray={dash} opacity={opacity} strokeLinecap="round" filter={glow} />,
         );
-        if (o.type === 'segment' && o.label) {
+        // 太短的线段（动点刚出发时）不标注，避免文字挤在点上
+        if (o.type === 'segment' && o.label && Math.hypot(b.x - a.x, b.y - a.y) > 28) {
           const text = interpolate(o.label, scene, params, points);
-          const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
           // 标签放在线段外侧（远离图形中心）
           const nx = -(b.y - a.y);
           const ny = b.x - a.x;
           const nl = Math.hypot(nx, ny) || 1;
           const cs = T(center);
-          const sign = (mid.x - cs.x) * nx + (mid.y - cs.y) * ny >= 0 ? 1 : -1;
-          layers.text.push(
-            <text key={`${key}-label`} x={mid.x + (sign * nx * 16) / nl} y={mid.y + (sign * ny * 16) / nl} className="seg-label" fill={color} opacity={opacity} textAnchor="middle" dominantBaseline="middle">
-              {text}
-            </text>,
-          );
+          const mid0 = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+          const sign = (mid0.x - cs.x) * nx + (mid0.y - cs.y) * ny >= 0 ? 1 : -1;
+          // 中点附近有点时，沿线段错开一些
+          const near = (m: Vec) => Object.values(points).some((p) => Math.hypot(T(p).x - m.x, T(p).y - m.y) < 18);
+          let mid = mid0;
+          for (const k of [0.5, 0.35, 0.65, 0.25, 0.75]) {
+            const m = { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k };
+            if (!near(m)) {
+              mid = m;
+              break;
+            }
+          }
+          labelSlots.push({ mid, nx: (sign * nx) / nl, ny: (sign * ny) / nl, text, color, opacity, key: `${key}-label` });
         }
         return;
       }
@@ -212,7 +240,8 @@ export function SceneCanvas({ scene, params, visible, highlighted }: Props) {
             <circle cx={p.x} cy={p.y} r={r} fill={moving ? '#fff' : color} stroke={color} strokeWidth={moving ? 3 : 1.5} />
           </g>,
         );
-        const label = o.label ?? o.id;
+        const names = mergedLabels.get(o.id);
+        const label = names ? (names.length > 1 ? `${names[0]}(${names.slice(1).join(',')})` : names[0]) : '';
         if (label) {
           const dir = unit(c.p.x - center.x, -(c.p.y - center.y)) ?? { x: -0.7, y: 0.7 };
           layers.text.push(
@@ -224,6 +253,21 @@ export function SceneCanvas({ scene, params, visible, highlighted }: Props) {
         return;
       }
     }
+  }
+
+  // 线段标签：依次放置，与已放置的标签重叠时往外推
+  const placed: Vec[] = [];
+  for (const slot of labelSlots) {
+    let pos = { x: slot.mid.x + slot.nx * 16, y: slot.mid.y + slot.ny * 16 };
+    for (let push = 16; push < 80 && placed.some((p) => Math.hypot(p.x - pos.x, p.y - pos.y) < 22); push += 14) {
+      pos = { x: slot.mid.x + slot.nx * (push + 14), y: slot.mid.y + slot.ny * (push + 14) };
+    }
+    placed.push(pos);
+    layers.text.push(
+      <text key={slot.key} x={pos.x} y={pos.y} className="seg-label" fill={slot.color} opacity={slot.opacity} textAnchor="middle" dominantBaseline="middle">
+        {slot.text}
+      </text>,
+    );
   }
 
   const axes = scene.axes
@@ -238,7 +282,7 @@ export function SceneCanvas({ scene, params, visible, highlighted }: Props) {
   return (
     <svg className="scene-canvas" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={scene.title} preserveAspectRatio="xMidYMid meet">
       <defs>
-        <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+        <filter id="glow" filterUnits="userSpaceOnUse" x={0} y={0} width={W} height={H}>
           <feGaussianBlur stdDeviation="2.5" result="blur" />
           <feMerge>
             <feMergeNode in="blur" />

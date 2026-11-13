@@ -5,6 +5,7 @@ import type {
   ConversationSummary,
   ProviderTestResult,
   PublicSettings,
+  SceneEvent,
   SettingsUpdate,
 } from '../../shared/types.ts';
 
@@ -70,18 +71,40 @@ export const api = {
     request(`/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 };
 
-/** 发送消息，逐个回调 SSE 事件。 */
-export async function sendChat(
-  input: { conversationId?: string; text: string; images: string[] },
-  onEvent: (event: ChatEvent) => void,
-  signal?: AbortSignal,
-): Promise<void> {
+/** 读取 SSE 响应，逐个回调事件。 */
+async function readSse<T>(res: Response, onEvent: (event: T) => void): Promise<void> {
+  const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = '';
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += value;
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() ?? '';
+      for (const block of blocks) {
+        const lines = block.split(/\r?\n/);
+        if (lines.some((line) => line.startsWith('event:'))) continue; // 心跳等非数据事件
+        const data = lines
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).replace(/^ /, ''))
+          .join('\n');
+        if (data) onEvent(JSON.parse(data) as T);
+      }
+    }
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') return;
+    throw new ApiError(0, '连接中断，回答可能不完整，刷新后可查看已保存的内容');
+  }
+}
+
+async function postSse<T>(path: string, body: unknown, onEvent: (event: T) => void, signal?: AbortSignal): Promise<void> {
   let res: Response;
   try {
-    res = await fetch('/api/chat', {
+    res = await fetch(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
+      body: JSON.stringify(body),
       credentials: 'same-origin',
       signal,
     });
@@ -99,28 +122,21 @@ export async function sendChat(
     if (res.status === 401) onUnauthorized();
     throw new ApiError(res.status, message);
   }
-  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-  let buffer = '';
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += value;
-      const blocks = buffer.split(/\r?\n\r?\n/);
-      buffer = blocks.pop() ?? '';
-      for (const block of blocks) {
-        const data = block
-          .split(/\r?\n/)
-          .filter((line) => line.startsWith('data:'))
-          .map((line) => line.slice(5).replace(/^ /, ''))
-          .join('\n');
-        if (data) onEvent(JSON.parse(data) as ChatEvent);
-      }
-    }
-  } catch (err) {
-    if ((err as Error).name === 'AbortError') return;
-    throw new ApiError(0, '连接中断，回答可能不完整，刷新后可查看已保存的内容');
-  }
+  await readSse(res, onEvent);
+}
+
+/** 为一条回答生成动画讲解。 */
+export function generateScene(messageId: string, onEvent: (event: SceneEvent) => void, signal?: AbortSignal): Promise<void> {
+  return postSse(`/api/messages/${encodeURIComponent(messageId)}/scene`, {}, onEvent, signal);
+}
+
+/** 发送消息，逐个回调 SSE 事件。 */
+export function sendChat(
+  input: { conversationId?: string; text: string; images: string[] },
+  onEvent: (event: ChatEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return postSse('/api/chat', input, onEvent, signal);
 }
 
 /** 压缩图片：长边不超过 maxSide，转成 JPEG data URL。题目照片这样处理后通常只有几百 KB。 */

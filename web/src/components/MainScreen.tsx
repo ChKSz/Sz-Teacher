@@ -201,6 +201,11 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
             streaming={streaming}
             settings={settings}
             onNeedSettings={() => setShowSettings(true)}
+            onScene={(messageId, record) =>
+              setCurrent((prev) =>
+                prev ? { ...prev, messages: prev.messages.map((m) => (m.id === messageId ? { ...m, scene: record } : m)) } : prev,
+              )
+            }
             providerReady={settings ? settings.provider.hasApiKey && settings.provider.baseUrl !== '' : true}
             />
         )}

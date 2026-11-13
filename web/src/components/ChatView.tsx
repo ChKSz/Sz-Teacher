@@ -1,7 +1,8 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { renderMarkdown, toSpeechText } from '../markdown.ts';
 import { speak, speechSupported, type SpeakHandle } from '../speech.ts';
-import type { Message, PublicSettings } from '../../../shared/types.ts';
+import { SceneSection } from '../scene/SceneSection.tsx';
+import type { Message, PublicSettings, SceneRecord } from '../../../shared/types.ts';
 
 const Markdown = memo(function Markdown({ text }: { text: string }) {
   const html = useMemo(() => renderMarkdown(text), [text]);
@@ -33,7 +34,15 @@ function SpeakButton({ text, settings }: { text: string; settings: PublicSetting
   );
 }
 
-function MessageItem({ message, settings }: { message: Message; settings: PublicSettings | null }) {
+function MessageItem({
+  message,
+  settings,
+  onScene,
+}: {
+  message: Message;
+  settings: PublicSettings | null;
+  onScene: (messageId: string, record: SceneRecord) => void;
+}) {
   const [copied, setCopied] = useState(false);
   if (message.role === 'user') {
     return (
@@ -72,6 +81,14 @@ function MessageItem({ message, settings }: { message: Message; settings: Public
             {copied ? '✓ 已复制' : '📋 复制'}
           </button>
         </div>
+        {message.status === 'done' && (
+          <SceneSection
+            messageId={message.id}
+            record={message.scene}
+            settings={settings}
+            onRecord={(record) => onScene(message.id, record)}
+          />
+        )}
       </div>
     </div>
   );
@@ -83,6 +100,7 @@ export function ChatView(props: {
   settings: PublicSettings | null;
   providerReady: boolean;
   onNeedSettings: () => void;
+  onScene: (messageId: string, record: SceneRecord) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -123,7 +141,7 @@ export function ChatView(props: {
     <div className="chat-scroll" ref={scrollerRef} onScroll={onScroll}>
       <div className="chat-inner">
         {props.messages.map((m) => (
-          <MessageItem key={m.id} message={m} settings={props.settings} />
+          <MessageItem key={m.id} message={m} settings={props.settings} onScene={props.onScene} />
         ))}
         {props.streaming && (
           <div className="msg assistant streaming">

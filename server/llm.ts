@@ -86,6 +86,22 @@ function networkError(err: unknown): LlmError {
   return new LlmError(`连接供应商失败：${cause}`);
 }
 
+/** 连接阶段失败（还没发出请求）时重试，供应商线路偶尔不稳定。 */
+const RETRYABLE = new Set(['UND_ERR_CONNECT_TIMEOUT', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND', 'UND_ERR_SOCKET']);
+
+async function fetchWithRetry(url: string, init: RequestInit, attempts = 3): Promise<Response> {
+  for (let i = 1; ; i += 1) {
+    try {
+      return await fetch(url, init);
+    } catch (err) {
+      const code = (err as { cause?: { code?: string } }).cause?.code;
+      const aborted = init.signal?.aborted;
+      if (i >= attempts || aborted || !code || !RETRYABLE.has(code)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 800 * i));
+    }
+  }
+}
+
 function requestBody(options: ChatOptions, stream: boolean): string {
   return JSON.stringify({
     model: options.model,
@@ -100,7 +116,7 @@ function requestBody(options: ChatOptions, stream: boolean): string {
 export async function chat(provider: ProviderConfig, options: ChatOptions): Promise<string> {
   let res: Response;
   try {
-    res = await fetch(endpoint(provider, '/chat/completions'), {
+    res = await fetchWithRetry(endpoint(provider, '/chat/completions'), {
       method: 'POST',
       headers: headers(provider),
       body: requestBody(options, false),
@@ -125,7 +141,7 @@ export async function chat(provider: ProviderConfig, options: ChatOptions): Prom
 export async function* streamChat(provider: ProviderConfig, options: ChatOptions): AsyncGenerator<string> {
   let res: Response;
   try {
-    res = await fetch(endpoint(provider, '/chat/completions'), {
+    res = await fetchWithRetry(endpoint(provider, '/chat/completions'), {
       method: 'POST',
       headers: headers(provider),
       body: requestBody(options, true),
@@ -191,7 +207,7 @@ export function parseSseLine(rawLine: string): string | typeof DONE | null {
 export async function listModels(provider: ProviderConfig): Promise<string[]> {
   let res: Response;
   try {
-    res = await fetch(endpoint(provider, '/models'), {
+    res = await fetchWithRetry(endpoint(provider, '/models'), {
       headers: headers(provider),
       signal: AbortSignal.timeout(30_000),
     });

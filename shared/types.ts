@@ -1,4 +1,5 @@
 // 前后端共用的接口数据类型。
+import type { Scene } from './scene/types.ts';
 
 export type ReasoningEffort = '' | 'low' | 'medium' | 'high';
 export type TeachingStyle = 'direct' | 'hint-first';
@@ -28,6 +29,14 @@ export interface ConversationSummary {
   updatedAt: number;
 }
 
+export interface SceneRecord {
+  id: string;
+  scene: Scene;
+  verified: boolean;
+  problems: string[];
+  createdAt: number;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant';
@@ -36,6 +45,8 @@ export interface Message {
   images: string[];
   status: 'done' | 'error';
   createdAt: number;
+  /** 这条回答对应的最新讲解剧本。 */
+  scene?: SceneRecord;
 }
 
 export interface ConversationDetail extends ConversationSummary {
@@ -52,6 +63,12 @@ export type ChatEvent =
   | { type: 'start'; conversationId: string; userMessage: Message; assistantMessageId: string }
   | { type: 'delta'; text: string }
   | { type: 'done'; message: Message; title: string }
+  | { type: 'error'; message: string };
+
+/** 生成讲解剧本接口返回的 SSE 事件。 */
+export type SceneEvent =
+  | { type: 'progress'; message: string }
+  | { type: 'done'; record: SceneRecord }
   | { type: 'error'; message: string };
 
 export interface ProviderTestResult {

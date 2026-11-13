@@ -13,8 +13,9 @@ import * as store from './store.ts';
 import { loadSettings, toPublic, updateSettings } from './settings.ts';
 import { chat, listModels, streamChat, LlmError, type ChatMessage, type ContentPart } from './llm.ts';
 import { solveSystemPrompt } from './prompts.ts';
+import { generateScene } from './sceneGen.ts';
 import { UploadStore, mimeOf, MAX_IMAGES_PER_MESSAGE } from './uploads.ts';
-import type { AuthStatus, ChatEvent, Message, ProviderTestResult, SettingsUpdate } from '../shared/types.ts';
+import type { AuthStatus, ChatEvent, Message, ProviderTestResult, SceneEvent, SettingsUpdate } from '../shared/types.ts';
 
 export const SESSION_COOKIE = 'sz_session';
 const MAX_TEXT_CHARS = 20_000;
@@ -349,6 +350,67 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
       });
     },
   );
+
+  /**
+   * 为某条回答生成动画讲解剧本。
+   * 请求：POST /api/messages/:id/scene
+   * 响应：SSE，事件见 SceneEvent。剧本生成通常需要 30~90 秒。
+   */
+  const generating = new Set<string>();
+  app.post('/api/messages/:id/scene', async (c) => {
+    const messageId = c.req.param('id');
+    const message = store.getMessage(db, messageId);
+    if (!message || message.role !== 'assistant') throw new HttpError(404, '回答不存在');
+    if (message.status !== 'done') throw new HttpError(400, '这条回答没有成功生成，不能制作讲解');
+    if (generating.has(messageId)) throw new HttpError(409, '这道题的讲解正在生成中');
+
+    // 找到这条回答对应的提问（它之前最近的一条用户消息），以及最初的题目
+    const history = store.getConversation(db, message.conversationId)!.messages;
+    const index = history.findIndex((m) => m.id === messageId);
+    const users = history.slice(0, index).filter((m) => m.role === 'user');
+    const first = users[0];
+    const question = [first?.content ?? '', users.length > 1 ? `（追问：${users.at(-1)!.content}）` : '']
+      .filter(Boolean)
+      .join('\n');
+    const images = (first?.images ?? []).map((n) => uploads.toDataUrl(n)).filter((u): u is string => u !== null);
+    const settings = loadSettings(db, config);
+
+    generating.add(messageId);
+    return streamSSE(c, async (stream) => {
+      const send = (event: SceneEvent) => stream.writeSSE({ data: JSON.stringify(event) });
+      // 学生关掉页面也继续生成，生成好后保存，下次打开就能看
+      const keepAlive = setInterval(() => {
+        if (!stream.aborted) void stream.writeSSE({ event: 'ping', data: '' }).catch(() => {});
+      }, 15_000);
+      try {
+        const result = await generateScene({
+          provider: settings.provider,
+          model: settings.sceneModel || settings.solveModel,
+          reasoningEffort: settings.reasoningEffort || undefined,
+          question,
+          images,
+          solution: message.content,
+          onProgress: (text) => {
+            if (!stream.aborted) void send({ type: 'progress', message: text }).catch(() => {});
+          },
+        });
+        if (!result.scene) {
+          if (!stream.aborted) {
+            await send({ type: 'error', message: `这道题暂时做不出动画讲解（${result.problems.slice(0, 2).join('；') || '模型输出无法使用'}）` });
+          }
+          return;
+        }
+        const record = store.saveScene(db, messageId, result.scene, result.verified, result.problems);
+        if (!stream.aborted) await send({ type: 'done', record });
+      } catch (err) {
+        if (!(err instanceof LlmError)) console.error(err);
+        if (!stream.aborted) await send({ type: 'error', message: err instanceof LlmError ? err.message : '生成讲解失败' });
+      } finally {
+        clearInterval(keepAlive);
+        generating.delete(messageId);
+      }
+    });
+  });
 
   app.all('/api/*', (c) => c.json({ error: '接口不存在' }, 404));
 

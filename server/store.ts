@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { Db } from './db.ts';
-import type { ConversationDetail, ConversationSummary, Message } from '../shared/types.ts';
+import type { ConversationDetail, ConversationSummary, Message, SceneRecord } from '../shared/types.ts';
+import type { Scene } from '../shared/scene/types.ts';
 
 interface ConversationRow {
   id: string;
@@ -54,7 +55,74 @@ export function getConversation(db: Db, id: string): ConversationDetail | null {
       'SELECT id, role, content, images, status, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at, rowid',
     )
     .all(id) as unknown as MessageRow[];
-  return { ...toSummary(row), messages: messages.map(toMessage) };
+  const result = messages.map(toMessage);
+  const scenes = latestScenes(db, id);
+  for (const m of result) {
+    const scene = scenes.get(m.id);
+    if (scene) m.scene = scene;
+  }
+  return { ...toSummary(row), messages: result };
+}
+
+interface SceneRow {
+  id: string;
+  message_id: string;
+  scene: string;
+  verified: number;
+  problems: string;
+  created_at: number;
+}
+
+function toSceneRecord(row: SceneRow): SceneRecord {
+  return {
+    id: row.id,
+    scene: JSON.parse(row.scene) as Scene,
+    verified: row.verified === 1,
+    problems: JSON.parse(row.problems) as string[],
+    createdAt: row.created_at,
+  };
+}
+
+/** 每条消息最新的剧本。 */
+function latestScenes(db: Db, conversationId: string): Map<string, SceneRecord> {
+  const rows = db
+    .prepare(
+      `SELECT s.id, s.message_id, s.scene, s.verified, s.problems, s.created_at
+       FROM scenes s JOIN messages m ON m.id = s.message_id
+       WHERE m.conversation_id = ?
+       ORDER BY s.created_at, s.rowid`,
+    )
+    .all(conversationId) as unknown as SceneRow[];
+  const map = new Map<string, SceneRecord>();
+  for (const row of rows) map.set(row.message_id, toSceneRecord(row));
+  return map;
+}
+
+export function getMessage(db: Db, id: string): (Message & { conversationId: string }) | null {
+  const row = db
+    .prepare('SELECT id, role, content, images, status, created_at, conversation_id FROM messages WHERE id = ?')
+    .get(id) as (MessageRow & { conversation_id: string }) | undefined;
+  return row ? { ...toMessage(row), conversationId: row.conversation_id } : null;
+}
+
+export function saveScene(
+  db: Db,
+  messageId: string,
+  scene: Scene,
+  verified: boolean,
+  problems: string[],
+  now = Date.now(),
+): SceneRecord {
+  const record: SceneRecord = { id: newId(), scene, verified, problems, createdAt: now };
+  db.prepare('INSERT INTO scenes (id, message_id, scene, verified, problems, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+    record.id,
+    messageId,
+    JSON.stringify(scene),
+    verified ? 1 : 0,
+    JSON.stringify(problems),
+    now,
+  );
+  return record;
 }
 
 export function createConversation(db: Db, title: string, now = Date.now()): ConversationSummary {

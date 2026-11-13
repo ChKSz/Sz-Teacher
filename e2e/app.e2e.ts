@@ -86,6 +86,14 @@ test('设置密码 → 提问 → 流式回答 → 追问 → 刷新后记录还
     ['system', 'user', 'assistant', 'user'],
   );
 
+  // 生成动画讲解：按钮 → 进度 → 播放器出现，刷新后仍在
+  await page.getByRole('button', { name: '🎬 生成动画讲解' }).first().click();
+  await page.locator('.msg.assistant .scene-player').first().waitFor({ timeout: 20_000 });
+  await page.locator('.msg.assistant .badge.ok').first().waitFor();
+  await page.screenshot({ path: path.join(SHOT_DIR, '2b-scene-inline.png') });
+  await page.reload();
+  await page.locator('.msg.assistant .scene-player').first().waitFor();
+
   // 设置面板：密钥打码、测试连接
   await page.getByRole('button', { name: '设置' }).click();
   const keyInput = page.getByPlaceholder(/已保存 sk-…3456/);
