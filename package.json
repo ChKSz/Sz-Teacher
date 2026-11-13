@@ -1,0 +1,41 @@
+{
+  "name": "sz-teacher",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "node --watch --env-file-if-exists=.env server/index.ts",
+    "dev:web": "vite",
+    "build": "vite build",
+    "start": "node --env-file-if-exists=.env server/index.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "test:e2e": "node --test e2e/*.e2e.ts",
+    "probe": "node --env-file=.env scripts/probe.mjs"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.8",
+    "dompurify": "^3.4.17",
+    "hono": "^4.13.18",
+    "katex": "^0.19.1",
+    "marked": "^18.2.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/katex": "^0.16.8",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "jsdom": "^31.0.1",
+    "playwright-core": "^1.65.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  }
+}
