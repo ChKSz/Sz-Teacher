@@ -671,3 +671,224 @@ textarea:focus {
     padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
   }
 }
+
+/* ---------- 讲解播放器 ---------- */
+.scene-player {
+  background: var(--panel);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.scene-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.scene-title {
+  font-weight: 600;
+  flex: 1;
+}
+.badge {
+  font-size: 0.78rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+.badge.ok {
+  background: #e3f6ea;
+  color: var(--ok);
+}
+.badge.warn {
+  background: #fff4e0;
+  color: var(--warn);
+}
+.scene-stage {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.scene-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 60vh;
+  user-select: none;
+}
+.scene-canvas .pt-label {
+  font: 600 17px/1 'Times New Roman', serif;
+  font-style: italic;
+}
+.scene-canvas .pt-label.moving {
+  font-size: 19px;
+}
+.scene-canvas .seg-label {
+  font: 600 15px/1 system-ui, sans-serif;
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 4px;
+}
+.scene-canvas .free-text {
+  font: 15px/1 system-ui, sans-serif;
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 4px;
+}
+.scene-canvas .free-text.hl {
+  font-weight: 700;
+}
+.scene-canvas .tick {
+  font: 11px/1 system-ui, sans-serif;
+  fill: #8a94a6;
+}
+.scene-canvas .pulse {
+  animation: pulse 1.4s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    transform: scale(0.8);
+    opacity: 0.25;
+  }
+  50% {
+    transform: scale(1.25);
+    opacity: 0.08;
+  }
+}
+.readouts {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font: 13px/1.6 ui-monospace, Consolas, monospace;
+  pointer-events: none;
+}
+.scene-caption {
+  min-height: 3.2em;
+  background: #f7f9fd;
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.scene-caption .markdown {
+  flex: 1;
+}
+.step-no {
+  flex: none;
+  font-size: 0.78rem;
+  color: #fff;
+  background: var(--primary);
+  border-radius: 999px;
+  padding: 0 8px;
+}
+.param-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.9rem;
+}
+.param-slider input {
+  flex: 1;
+  accent-color: var(--primary);
+}
+.param-value {
+  min-width: 5.5em;
+  text-align: right;
+  font-family: ui-monospace, Consolas, monospace;
+}
+.scene-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.play-btn {
+  min-width: 96px;
+}
+.icon-btn.off {
+  opacity: 0.5;
+}
+.step-dots {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  padding: 0 4px;
+}
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: none;
+  background: var(--border);
+  cursor: pointer;
+  padding: 0;
+}
+.dot.past {
+  background: #a9c1f7;
+}
+.dot.active {
+  background: var(--primary);
+  transform: scale(1.3);
+}
+.demo-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.demo-head h2 {
+  margin: 0;
+}
+.demo-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.chip {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+.chip.active {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+@media (max-width: 760px) {
+  .readouts {
+    position: static;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 14px;
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+  }
+  .step-dots {
+    width: 100%;
+    justify-content: center;
+    margin: 4px 0 0;
+  }
+  .scene-player {
+    padding: 8px;
+  }
+}
+.demo-btn {
+  margin: 0 12px 10px;
+}
+.demo-btn.active {
+  border-color: var(--primary);
+  color: var(--primary);
+}

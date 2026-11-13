@@ -16,6 +16,8 @@ export function Sidebar(props: {
   onNew: () => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
+  onDemo: () => void;
+  demoActive: boolean;
 }) {
   return (
     <aside className="sidebar">
@@ -24,6 +26,9 @@ export function Sidebar(props: {
       </div>
       <button className="btn primary new-btn" onClick={props.onNew} disabled={props.disabled}>
         ＋ 新题目
+      </button>
+      <button className={`btn demo-btn ${props.demoActive ? 'active' : ''}`} onClick={props.onDemo} disabled={props.disabled}>
+        🎬 示例讲解
       </button>
       <nav className="conv-list" aria-label="题目列表">
         {props.conversations.length === 0 && <p className="muted small pad">还没有记录</p>}

@@ -4,6 +4,7 @@ import { Sidebar } from './Sidebar.tsx';
 import { ChatView } from './ChatView.tsx';
 import { Composer } from './Composer.tsx';
 import { SettingsPanel } from './SettingsPanel.tsx';
+import { DemoGallery } from '../scene/DemoGallery.tsx';
 import type { ConversationDetail, ConversationSummary, Message, PublicSettings } from '../../../shared/types.ts';
 
 /** 当前会话 ID 保存在地址栏 #c=<id>，刷新和分享链接后仍能回到同一道题。 */
@@ -24,6 +25,7 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [settings, setSettings] = useState<PublicSettings | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showDemo, setShowDemo] = useState(() => location.hash === '#demo');
   const abortRef = useRef<AbortController | null>(null);
 
   const loadList = useCallback(() => {
@@ -36,6 +38,10 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
   }, [loadList]);
 
   useEffect(() => {
+    if (showDemo) {
+      if (location.hash !== '#demo') history.replaceState(null, '', '#demo');
+      return;
+    }
     writeHashId(currentId);
     if (!currentId) {
       setCurrent(null);
@@ -56,12 +62,13 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
     };
     // 只在切换会话时加载
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentId]);
+  }, [currentId, showDemo]);
 
   const select = (id: string) => {
     if (streaming) return;
     setError('');
     setCurrentId(id);
+    setShowDemo(false);
     setSidebarOpen(false);
   };
 
@@ -169,6 +176,11 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
         onNew={() => select('')}
         onDelete={remove}
         onRename={rename}
+        onDemo={() => {
+          setShowDemo(true);
+          setSidebarOpen(false);
+        }}
+        demoActive={showDemo}
       />
       <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
       <main className="main">
@@ -176,18 +188,22 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
           <button className="icon-btn mobile-only" onClick={() => setSidebarOpen(true)} aria-label="打开题目列表">
             ☰
           </button>
-          <div className="topbar-title">{current?.title || '新的题目'}</div>
+          <div className="topbar-title">{showDemo ? '示例讲解' : current?.title || '新的题目'}</div>
           <button className="icon-btn" onClick={() => setShowSettings(true)} aria-label="设置" title="设置">
             ⚙
           </button>
         </header>
-        <ChatView
-          messages={current?.messages ?? []}
-          streaming={streaming}
-          settings={settings}
-          onNeedSettings={() => setShowSettings(true)}
-          providerReady={settings ? settings.provider.hasApiKey && settings.provider.baseUrl !== '' : true}
-        />
+        {showDemo ? (
+          <DemoGallery tts={settings?.tts ?? { rate: 1, voice: '' }} onClose={() => setShowDemo(false)} />
+        ) : (
+          <ChatView
+            messages={current?.messages ?? []}
+            streaming={streaming}
+            settings={settings}
+            onNeedSettings={() => setShowSettings(true)}
+            providerReady={settings ? settings.provider.hasApiKey && settings.provider.baseUrl !== '' : true}
+            />
+        )}
         {error && (
           <div className="error-bar" role="alert">
             <span>{error}</span>
@@ -196,7 +212,7 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
             </button>
           </div>
         )}
-        <Composer busy={streaming !== null} onSend={send} onStop={stop} isFollowUp={!!current} />
+        {!showDemo && <Composer busy={streaming !== null} onSend={send} onStop={stop} isFollowUp={!!current} />}
       </main>
       {showSettings && (
         <SettingsPanel
