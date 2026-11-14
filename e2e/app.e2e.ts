@@ -87,7 +87,7 @@ test('设置密码 → 提问 → 流式回答 → 追问 → 刷新后记录还
   );
 
   // 生成动画讲解：按钮 → 进度 → 播放器出现，刷新后仍在
-  await page.getByRole('button', { name: '🎬 生成动画讲解' }).first().click();
+  await page.getByRole('button', { name: '生成动画讲解' }).first().click();
   await page.locator('.msg.assistant .scene-player').first().waitFor({ timeout: 20_000 });
   await page.locator('.msg.assistant .badge.ok').first().waitFor();
   await page.screenshot({ path: path.join(SHOT_DIR, '2b-scene-inline.png') });
@@ -97,7 +97,7 @@ test('设置密码 → 提问 → 流式回答 → 追问 → 刷新后记录还
   // 在讲解某一步点"这步没懂"，自动发出带步骤内容的追问
   const before = await page.locator('.msg.user').count();
   await page.getByRole('tab', { name: '第 4 步' }).first().click();
-  await page.getByRole('button', { name: '🙋 这步没懂' }).first().click();
+  await page.getByRole('button', { name: '这步没懂' }).first().click();
   await page.locator('.msg.user').nth(before).waitFor();
   const askText = await page.locator('.msg.user').nth(before).innerText();
   assert.match(askText, /第 4 步/);
@@ -159,7 +159,7 @@ test('上传图片提问，手机尺寸下侧边栏可以打开', async () => {
 
   // 手机布局：侧边栏默认隐藏，点按钮后出现
   await page.getByRole('button', { name: '打开题目列表' }).click();
-  await page.getByRole('button', { name: '＋ 新题目' }).click();
+  await page.getByRole('button', { name: '新题目' }).click();
   await page.getByText('今天想弄懂哪道题？').waitFor();
   fs.rmSync(file, { force: true });
   await page.context().close();

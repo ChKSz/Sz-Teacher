@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CircleAlert, CircleCheck, Hand, Pause, Play, RotateCcw, SkipBack, StepBack, StepForward, Volume2, VolumeX } from 'lucide-react';
 import { SceneCanvas } from './SceneCanvas.tsx';
 import { buildTimeline, ease, initialVisible } from './timeline.ts';
 import { computeScene, defaultParams, interpolate, formatNumber } from '../../../shared/scene/engine.ts';
@@ -177,8 +178,14 @@ export function ScenePlayer({ scene, tts, verified, onAsk }: Props) {
     <div className="scene-player">
       <div className="scene-head">
         <span className="scene-title">{scene.title}</span>
-        {verified === true && <span className="badge ok" title="程序已把结论代回图形验算">✓ 已验算</span>}
-        {verified === false && <span className="badge warn" title="部分结论与图形不符，请谨慎参考">⚠ 验算未通过</span>}
+        {verified === true && <span className="badge ok" title="程序已把结论代回图形验算">
+            <CircleCheck size={13} aria-hidden="true" />
+            已验算
+          </span>}
+        {verified === false && <span className="badge warn" title="部分结论与图形不符，请谨慎参考">
+            <CircleAlert size={13} aria-hidden="true" />
+            验算未通过
+          </span>}
       </div>
       <div className="scene-stage">
         <SceneCanvas scene={scene} params={params} visible={visible} highlighted={highlighted} />
@@ -194,8 +201,10 @@ export function ScenePlayer({ scene, tts, verified, onAsk }: Props) {
       <div className="scene-caption" aria-live="polite">
         {step ? (
           <>
-            <span className="step-no">
-              第 {stepIndex + 1}/{scene.steps.length} 步
+            <span className="step-no" aria-label={`第 ${stepIndex + 1}/${scene.steps.length} 步`}>
+              <span className="step-no-cur">{String(stepIndex + 1).padStart(2, '0')}</span>
+              <span className="step-no-total">/{String(scene.steps.length).padStart(2, '0')}</span>
+              <span className="sr-only">第 {stepIndex + 1}/{scene.steps.length} 步</span>
             </span>
             <div className="markdown" dangerouslySetInnerHTML={{ __html: stepHtml }} />
             {onAsk && step && (
@@ -208,12 +217,13 @@ export function ScenePlayer({ scene, tts, verified, onAsk }: Props) {
                 }}
                 title="就这一步提问"
               >
-                🙋 这步没懂
+                <Hand size={14} aria-hidden="true" />
+                这步没懂
               </button>
             )}
           </>
         ) : (
-          <span className="muted">点 ▶ 开始讲解，也可以拖动下面的滑块自己观察。</span>
+          <span className="muted">点“讲解”开始，也可以拖动下面的滑块自己观察。</span>
         )}
       </div>
 
@@ -237,13 +247,14 @@ export function ScenePlayer({ scene, tts, verified, onAsk }: Props) {
 
       <div className="scene-controls">
         <button className="icon-btn" onClick={() => go(-1)} title="回到开头" aria-label="回到开头">
-          ⏮
+          <SkipBack size={17} />
         </button>
         <button className="icon-btn" onClick={() => go(stepIndex - 1)} disabled={stepIndex <= 0} title="上一步" aria-label="上一步">
-          ◀
+          <StepBack size={17} />
         </button>
         <button className="btn primary play-btn" onClick={togglePlay} aria-label={playing ? '暂停' : '播放'}>
-          {playing ? '⏸ 暂停' : stepIndex >= scene.steps.length - 1 ? '↻ 重新讲' : '▶ 讲解'}
+          {playing ? <Pause size={15} fill="currentColor" aria-hidden="true" /> : stepIndex >= scene.steps.length - 1 ? <RotateCcw size={15} aria-hidden="true" /> : <Play size={15} fill="currentColor" aria-hidden="true" />}
+          {playing ? '暂停' : stepIndex >= scene.steps.length - 1 ? '重新讲' : '讲解'}
         </button>
         <button
           className="icon-btn"
@@ -252,10 +263,10 @@ export function ScenePlayer({ scene, tts, verified, onAsk }: Props) {
           title="下一步"
           aria-label="下一步"
         >
-          ▶
+          <StepForward size={17} />
         </button>
         <button className="icon-btn" onClick={replay} disabled={stepIndex < 0} title="重播这一步" aria-label="重播这一步">
-          ↻
+          <RotateCcw size={16} />
         </button>
         {speechSupported() && (
           <button
@@ -267,7 +278,7 @@ export function ScenePlayer({ scene, tts, verified, onAsk }: Props) {
             title={voiceOn ? '关闭朗读' : '打开朗读'}
             aria-label={voiceOn ? '关闭朗读' : '打开朗读'}
           >
-            {voiceOn ? '🔊' : '🔇'}
+            {voiceOn ? <Volume2 size={17} /> : <VolumeX size={17} />}
           </button>
         )}
         <div className="step-dots" role="tablist" aria-label="步骤">

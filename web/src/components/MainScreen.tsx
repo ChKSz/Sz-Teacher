@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Menu, NotebookPen, Settings, Star, X } from 'lucide-react';
 import { api, sendChat } from '../api.ts';
 import { Sidebar } from './Sidebar.tsx';
 import { ChatView } from './ChatView.tsx';
@@ -6,6 +7,8 @@ import { Composer } from './Composer.tsx';
 import { SettingsPanel } from './SettingsPanel.tsx';
 import { DemoGallery } from '../scene/DemoGallery.tsx';
 import { NoteBar } from './NoteBar.tsx';
+import { useConfirm } from './ConfirmDialog.tsx';
+import type { ThemeChoice } from '../theme.ts';
 import type { ConversationDetail, ConversationSummary, Message, PublicSettings } from '../../../shared/types.ts';
 
 /** 当前会话 ID 保存在地址栏 #c=<id>，刷新和分享链接后仍能回到同一道题。 */
@@ -17,7 +20,15 @@ function writeHashId(id: string): void {
   if (location.hash !== next) history.replaceState(null, '', next || location.pathname);
 }
 
-export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
+export function MainScreen({
+  onLoggedOut,
+  theme,
+  onTheme,
+}: {
+  onLoggedOut: () => void;
+  theme: ThemeChoice;
+  onTheme: (t: ThemeChoice) => void;
+}) {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [current, setCurrent] = useState<ConversationDetail | null>(null);
   const [currentId, setCurrentId] = useState(readHashId);
@@ -29,6 +40,27 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [showDemo, setShowDemo] = useState(() => location.hash === '#demo');
   const [showNote, setShowNote] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const [confirmDialog, askConfirm] = useConfirm();
+  const mainRef = useRef<HTMLElement>(null);
+  const topRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  // 顶栏和输入框浮在内容上方（毛玻璃效果），内容区据此留出上下空白
+  useLayoutEffect(() => {
+    const main = mainRef.current;
+    const top = topRef.current;
+    const bottom = bottomRef.current;
+    if (!main || !top || !bottom) return;
+    const update = () => {
+      main.style.setProperty('--top-h', `${top.offsetHeight}px`);
+      main.style.setProperty('--bottom-h', `${bottom.offsetHeight}px`);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(top);
+    ro.observe(bottom);
+    return () => ro.disconnect();
+  }, []);
 
   const loadList = useCallback(() => {
     api.conversations().then(setConversations).catch((err: Error) => setError(err.message));
@@ -146,7 +178,14 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
   };
 
   const remove = async (id: string) => {
-    if (!confirm('确定删除这道题的全部记录吗？')) return;
+    const title = conversations.find((c) => c.id === id)?.title;
+    const ok = await askConfirm({
+      title: '删除这道题？',
+      body: <>「{title}」的全部对话、动画讲解和笔记都会被删除，无法恢复。</>,
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await api.deleteConversation(id);
       if (id === currentId) setCurrentId('');
@@ -187,12 +226,14 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
           setSidebarOpen(false);
         }}
         demoActive={showDemo}
+        onClose={() => setSidebarOpen(false)}
       />
       <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
-      <main className="main">
+      <main className="main" ref={mainRef}>
+        <div className="top-stack" ref={topRef}>
         <header className="topbar">
           <button className="icon-btn mobile-only" onClick={() => setSidebarOpen(true)} aria-label="打开题目列表">
-            ☰
+            <Menu size={18} />
           </button>
           <div className="topbar-title">{showDemo ? '示例讲解' : current?.title || '新的题目'}</div>
           {!showDemo && current && (
@@ -203,7 +244,7 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
                 aria-label={current.starred ? '移出错题本' : '加入错题本'}
                 title={current.starred ? '移出错题本' : '加入错题本'}
               >
-                {current.starred ? '★' : '☆'}
+                <Star size={18} fill={current.starred ? 'currentColor' : 'none'} />
               </button>
               <button
                 className={`icon-btn ${showNote ? 'active' : ''}`}
@@ -211,12 +252,12 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
                 aria-label="错题笔记"
                 title="错题笔记"
               >
-                📝
+                <NotebookPen size={18} />
               </button>
             </>
           )}
           <button className="icon-btn" onClick={() => setShowSettings(true)} aria-label="设置" title="设置">
-            ⚙
+            <Settings size={18} />
           </button>
         </header>
         {!showDemo && current && (showNote || current.note) && (
@@ -232,6 +273,7 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
             onCancel={() => setShowNote(false)}
           />
         )}
+        </div>
         {showDemo ? (
           <DemoGallery tts={settings?.tts ?? { rate: 1, voice: '' }} onClose={() => setShowDemo(false)} />
         ) : (
@@ -248,26 +290,33 @@ export function MainScreen({ onLoggedOut }: { onLoggedOut: () => void }) {
                 prev ? { ...prev, messages: prev.messages.map((m) => (m.id === messageId ? { ...m, scene: record } : m)) } : prev,
               )
             }
+            onDemo={() => setShowDemo(true)}
             providerReady={settings ? settings.provider.hasApiKey && settings.provider.baseUrl !== '' : true}
-            />
+          />
         )}
+        <div className="bottom-stack" ref={bottomRef}>
         {error && (
           <div className="error-bar" role="alert">
             <span>{error}</span>
-            <button className="icon-btn" onClick={() => setError('')} aria-label="关闭">
-              ×
+            <button className="icon-btn small" onClick={() => setError('')} aria-label="关闭">
+              <X size={16} />
             </button>
           </div>
         )}
         {!showDemo && <Composer busy={streaming !== null} onSend={send} onStop={stop} isFollowUp={!!current} />}
+        </div>
       </main>
       {showSettings && (
         <SettingsPanel
           onClose={() => setShowSettings(false)}
           onSaved={setSettings}
           onLogout={logout}
+          theme={theme}
+          onTheme={onTheme}
+          askConfirm={askConfirm}
         />
       )}
+      {confirmDialog}
     </div>
   );
 }

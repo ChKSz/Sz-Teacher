@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Monitor, Moon, Sun, X } from 'lucide-react';
+import type { ThemeChoice } from '../theme.ts';
 import { api } from '../api.ts';
 import { chineseVoices, speak, speechSupported } from '../speech.ts';
 import type { ProviderTestResult, PublicSettings, SettingsUpdate } from '../../../shared/types.ts';
@@ -7,6 +9,9 @@ export function SettingsPanel(props: {
   onClose: () => void;
   onSaved: (settings: PublicSettings) => void;
   onLogout: () => void;
+  theme: ThemeChoice;
+  onTheme: (t: ThemeChoice) => void;
+  askConfirm: (opts: { title: string; body?: ReactNode; confirmText?: string; danger?: boolean }) => Promise<boolean>;
 }) {
   const [settings, setSettings] = useState<PublicSettings | null>(null);
   const [baseUrl, setBaseUrl] = useState('');
@@ -105,7 +110,13 @@ export function SettingsPanel(props: {
   };
 
   const logoutAll = async () => {
-    if (!confirm('退出所有设备（包括当前设备）？')) return;
+    const ok = await props.askConfirm({
+      title: '退出所有设备？',
+      body: '包括当前设备在内，所有已登录的设备都需要重新输入密码。',
+      confirmText: '全部退出',
+      danger: true,
+    });
+    if (!ok) return;
     await api.logoutAll().catch(() => {});
     props.onLogout();
   };
@@ -116,13 +127,38 @@ export function SettingsPanel(props: {
         <header className="modal-head">
           <h2>设置</h2>
           <button className="icon-btn" onClick={props.onClose} aria-label="关闭设置">
-            ×
+            <X size={18} />
           </button>
         </header>
         {!settings ? (
           <div className="modal-body muted">{error || '加载中…'}</div>
         ) : (
           <div className="modal-body">
+            <section>
+              <h3>外观</h3>
+              <div className="segmented theme-switch" role="radiogroup" aria-label="外观">
+                {(
+                  [
+                    ['light', '浅色', <Sun key="i" size={15} aria-hidden="true" />],
+                    ['dark', '深色', <Moon key="i" size={15} aria-hidden="true" />],
+                    ['system', '跟随系统', <Monitor key="i" size={15} aria-hidden="true" />],
+                  ] as const
+                ).map(([value, label, icon]) => (
+                  <button
+                    key={value}
+                    className={props.theme === value ? 'active' : ''}
+                    onClick={() => props.onTheme(value)}
+                    role="radio"
+                    aria-checked={props.theme === value}
+                  >
+                    {icon}
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="hint">只保存在这台设备上，立即生效。</p>
+            </section>
+
             <section>
               <h3>模型供应商</h3>
               <label>
@@ -144,7 +180,9 @@ export function SettingsPanel(props: {
                 <input value={solveModel} onChange={(e) => setSolveModel(e.target.value)} list="model-options" />
               </label>
               <label>
-                讲解剧本模型 <span className="muted small">（生成动画讲解用）</span>
+                <span>
+                  讲解剧本模型 <span className="muted">· 生成动画讲解用</span>
+                </span>
                 <input value={sceneModel} onChange={(e) => setSceneModel(e.target.value)} list="model-options" />
               </label>
               <datalist id="model-options">
@@ -214,7 +252,7 @@ export function SettingsPanel(props: {
                   >
                     试听
                   </button>
-                  <p className="muted small">声音保存在服务器上，但每台设备可用的声音不同；找不到时会自动选择。</p>
+                  <p className="hint">声音保存在服务器上，但每台设备可用的声音不同；找不到时会自动选择。</p>
                 </>
               )}
             </section>

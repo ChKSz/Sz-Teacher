@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import { ScenePlayer } from './ScenePlayer.tsx';
 import { EXAMPLES } from '../../../shared/scene/examples.ts';
 import { validateScene } from '../../../shared/scene/validate.ts';
@@ -11,14 +12,18 @@ export function DemoGallery({ tts, onClose }: { tts: { rate: number; voice: stri
     <div className="chat-scroll">
       <div className="chat-inner">
         <div className="demo-head">
-          <h2>示例讲解</h2>
+          <div>
+            <h2>示例讲解</h2>
+            <p className="muted small">不需要模型，直接体验动画播放器：可以逐步播放，也可以拖动滑块自己观察。</p>
+          </div>
           <button className="btn" onClick={onClose}>
+            <ArrowLeft size={15} aria-hidden="true" />
             返回
           </button>
         </div>
-        <div className="demo-tabs" role="tablist">
+        <div className="demo-tabs segmented wrap" role="tablist">
           {EXAMPLES.map((s, i) => (
-            <button key={s.title} className={`chip ${i === index ? 'active' : ''}`} onClick={() => setIndex(i)} role="tab" aria-selected={i === index}>
+            <button key={s.title} className={i === index ? 'active' : ''} onClick={() => setIndex(i)} role="tab" aria-selected={i === index}>
               {s.title}
             </button>
           ))}

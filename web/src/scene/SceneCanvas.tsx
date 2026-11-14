@@ -4,14 +4,37 @@ import { computeScene, interpolate, sceneBounds } from '../../../shared/scene/en
 import type { Color, Computed, Scene, SceneObject, Vec } from '../../../shared/scene/types.ts';
 import { isPointObject } from '../../../shared/scene/types.ts';
 
-export const COLORS: Record<Color, string> = {
-  blue: '#2f6fed',
-  red: '#e0383e',
-  green: '#1f9d55',
-  orange: '#e8890c',
-  purple: '#8b4fd8',
-  gray: '#8a94a6',
-  black: '#1d2433',
+import { useIsDark } from '../theme.ts';
+
+/** 作图配色：浅色是"纸面墨水"，深色是"蓝图"。 */
+interface Palette extends Record<Color, string> {
+  bg: string;
+  grid: string;
+  axis: string;
+}
+const LIGHT: Palette = {
+  blue: '#2c5cc5',
+  red: '#cf4a3a',
+  green: '#2e8a57',
+  orange: '#d07a26',
+  purple: '#7a52c2',
+  gray: '#8b877b',
+  black: '#2b2925',
+  bg: '#fffefb',
+  grid: '#efece3',
+  axis: '#a29d90',
+};
+const DARK: Palette = {
+  blue: '#7ea6ff',
+  red: '#ff8270',
+  green: '#62cf92',
+  orange: '#f0a95e',
+  purple: '#b79bff',
+  gray: '#9a968b',
+  black: '#ebe7de',
+  bg: '#1f1e1b',
+  grid: '#2b2a26',
+  axis: '#6f6b62',
 };
 
 const W = 640;
@@ -25,6 +48,7 @@ interface Props {
 }
 
 export function SceneCanvas({ scene, params, visible, highlighted }: Props) {
+  const COLORS = useIsDark() ? DARK : LIGHT;
   const bounds = useMemo(() => sceneBounds(scene), [scene]);
   // 等比例缩放，保证角度和长度不变形
   const view = useMemo(() => {
@@ -237,7 +261,7 @@ export function SceneCanvas({ scene, params, visible, highlighted }: Props) {
         layers.point.push(
           <g key={key} data-id={key} opacity={pointOpacity}>
             {moving && <circle cx={p.x} cy={p.y} r={r + 6} fill={color} opacity={0.18} className="pulse" />}
-            <circle cx={p.x} cy={p.y} r={r} fill={moving ? '#fff' : color} stroke={color} strokeWidth={moving ? 3 : 1.5} />
+            <circle cx={p.x} cy={p.y} r={r} fill={moving ? COLORS.bg : color} stroke={color} strokeWidth={moving ? 3 : 1.5} />
           </g>,
         );
         const names = mergedLabels.get(o.id);
@@ -276,7 +300,7 @@ export function SceneCanvas({ scene, params, visible, highlighted }: Props) {
         xmax: view.fromScreen(W, 0).x,
         ymin: view.fromScreen(0, H).y,
         ymax: view.fromScreen(0, 0).y,
-      }, niceStep(Math.max(bounds.xmax - bounds.xmin, bounds.ymax - bounds.ymin)))
+      }, niceStep(Math.max(bounds.xmax - bounds.xmin, bounds.ymax - bounds.ymin)), COLORS)
     : null;
 
   return (
@@ -290,7 +314,13 @@ export function SceneCanvas({ scene, params, visible, highlighted }: Props) {
           </feMerge>
         </filter>
       </defs>
-      <rect width={W} height={H} fill="#fff" />
+      <defs>
+        <pattern id="paper-grid" width={20} height={20} patternUnits="userSpaceOnUse">
+          <path d="M 20 0 L 0 0 0 20" fill="none" stroke={COLORS.grid} strokeWidth={1} />
+        </pattern>
+      </defs>
+      <rect width={W} height={H} fill={COLORS.bg} />
+      {!scene.axes && <rect width={W} height={H} fill="url(#paper-grid)" />}
       {axes}
       {layers.fill}
       {layers.line}
@@ -317,6 +347,7 @@ function renderAxes(
   view: { toScreen: (p: Vec) => Vec },
   b: { xmin: number; xmax: number; ymin: number; ymax: number },
   step: number,
+  colors: Palette,
 ) {
   const T = view.toScreen;
   const ticks: React.ReactNode[] = [];
@@ -325,7 +356,7 @@ function renderAxes(
     const p = T({ x, y: 0 });
     const top = T({ x, y: b.ymax });
     const bottom = T({ x, y: b.ymin });
-    grid.push(<line key={`gx${x}`} x1={p.x} y1={top.y} x2={p.x} y2={bottom.y} stroke="#eef1f6" />);
+    grid.push(<line key={`gx${x}`} x1={p.x} y1={top.y} x2={p.x} y2={bottom.y} stroke={colors.grid} />);
     if (Math.abs(x) > 1e-9) {
       ticks.push(
         <text key={`tx${x}`} x={p.x} y={p.y + 14} className="tick" textAnchor="middle">
@@ -338,7 +369,7 @@ function renderAxes(
     const p = T({ x: 0, y });
     const left = T({ x: b.xmin, y });
     const right = T({ x: b.xmax, y });
-    grid.push(<line key={`gy${y}`} x1={left.x} y1={p.y} x2={right.x} y2={p.y} stroke="#eef1f6" />);
+    grid.push(<line key={`gy${y}`} x1={left.x} y1={p.y} x2={right.x} y2={p.y} stroke={colors.grid} />);
     if (Math.abs(y) > 1e-9) {
       ticks.push(
         <text key={`ty${y}`} x={p.x - 6} y={p.y} className="tick" textAnchor="end" dominantBaseline="middle">
@@ -354,8 +385,8 @@ function renderAxes(
   return (
     <g className="axes">
       {grid}
-      <line x1={x0.x} y1={x0.y} x2={x1.x} y2={x1.y} stroke="#9aa3b5" strokeWidth={1.2} />
-      <line x1={y0.x} y1={y0.y} x2={y1.x} y2={y1.y} stroke="#9aa3b5" strokeWidth={1.2} />
+      <line x1={x0.x} y1={x0.y} x2={x1.x} y2={x1.y} stroke={colors.axis} strokeWidth={1.2} />
+      <line x1={y0.x} y1={y0.y} x2={y1.x} y2={y1.y} stroke={colors.axis} strokeWidth={1.2} />
       <text x={x1.x - 6} y={x1.y - 8} className="tick" textAnchor="end">x</text>
       <text x={y1.x + 8} y={y1.y + 12} className="tick">y</text>
       {ticks}

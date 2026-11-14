@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight, RotateCw, Shapes } from 'lucide-react';
 import { generateScene } from '../api.ts';
 import { ScenePlayer } from './ScenePlayer.tsx';
 import type { PublicSettings, SceneRecord } from '../../../shared/types.ts';
@@ -80,10 +81,12 @@ export function SceneSection(props: {
       <div className="scene-section" ref={boxRef}>
         <div className="scene-section-head">
           <button className="msg-action" onClick={() => setOpen(!open)}>
-            {open ? '▾ 收起动画讲解' : '▸ 展开动画讲解'}
+            {open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
+            {open ? '收起动画讲解' : '展开动画讲解'}
           </button>
           <button className="msg-action" onClick={run} title="重新生成动画讲解">
-            ↻ 重新生成
+            <RotateCw size={13} aria-hidden="true" />
+            重新生成
           </button>
         </div>
         {open && <ScenePlayer scene={props.record.scene} tts={tts} verified={props.record.verified} onAsk={props.onAsk} />}
@@ -107,12 +110,14 @@ export function SceneSection(props: {
         <div className="scene-working" role="status">
           <span className="spinner" />
           <span>
-            {progress}（{elapsed} 秒，通常需要 30~90 秒）
+            {progress}
+            <span className="muted">　{elapsed} 秒 · 通常需要 30~90 秒</span>
           </span>
         </div>
       ) : (
-        <button className="btn scene-btn" onClick={run}>
-          🎬 生成动画讲解
+        <button className="btn scene-btn" onClick={run} aria-label="生成动画讲解">
+          <Shapes size={16} aria-hidden="true" />
+          生成动画讲解
         </button>
       )}
       {status === 'error' && <p className="error-text small">{error}</p>}

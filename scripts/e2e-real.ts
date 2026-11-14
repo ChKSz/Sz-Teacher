@@ -31,11 +31,11 @@ try {
   await page.getByLabel('输入题目').fill(question);
   let t0 = Date.now();
   await page.getByRole('button', { name: '发送' }).click();
-  await page.getByRole('button', { name: '🎬 生成动画讲解' }).waitFor({ timeout: 300_000 });
+  await page.getByRole('button', { name: '生成动画讲解' }).waitFor({ timeout: 300_000 });
   console.log(`解答完成 ${Date.now() - t0} ms`);
   await page.screenshot({ path: path.join(out, '1-answer.png'), fullPage: true });
   t0 = Date.now();
-  await page.getByRole('button', { name: '🎬 生成动画讲解' }).click();
+  await page.getByRole('button', { name: '生成动画讲解' }).click();
   await page.locator('.scene-player, .scene-section .error-text').first().waitFor({ timeout: 480_000 });
   console.log(`讲解完成 ${Date.now() - t0} ms`);
   const err = await page.locator('.scene-section .error-text').count();

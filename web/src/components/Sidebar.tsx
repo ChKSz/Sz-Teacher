@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { Check, Pencil, Plus, Search, Shapes, Star, Trash2, X } from 'lucide-react';
+import { Logo } from './Logo.tsx';
 import type { ConversationSummary } from '../../../shared/types.ts';
 
 function formatTime(ms: number): string {
@@ -7,6 +9,15 @@ function formatTime(ms: number): string {
   const sameDay = d.toDateString() === now.toDateString();
   const pad = (n: number) => String(n).padStart(2, '0');
   return sameDay ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
+/** 按时间分组：今天 / 最近 7 天 / 更早。 */
+function groupOf(ms: number): string {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (ms >= startOfToday) return '今天';
+  if (ms >= startOfToday - 6 * 86400_000) return '最近 7 天';
+  return '更早';
 }
 
 export function Sidebar(props: {
@@ -19,75 +30,138 @@ export function Sidebar(props: {
   onRename: (id: string, title: string) => void;
   onDemo: () => void;
   demoActive: boolean;
+  onClose: () => void;
 }) {
   const [filter, setFilter] = useState<'all' | 'starred'>('all');
   const [query, setQuery] = useState('');
+  const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const q = query.trim().toLowerCase();
   const shown = props.conversations.filter(
     (c) => (filter === 'all' || c.starred) && (!q || c.title.toLowerCase().includes(q) || c.note.toLowerCase().includes(q)),
   );
   const starredCount = props.conversations.filter((c) => c.starred).length;
+
+  const commitRename = () => {
+    if (!editing) return;
+    const title = editing.title.trim();
+    const original = props.conversations.find((c) => c.id === editing.id)?.title;
+    if (title && title !== original) props.onRename(editing.id, title);
+    setEditing(null);
+  };
+
+  let lastGroup = '';
   return (
     <aside className="sidebar">
       <div className="sidebar-head">
-        <span className="brand">📐 Sz-Teacher</span>
+        <Logo size={26} />
+        <span className="brand">Sz-Teacher</span>
+        <button className="icon-btn mobile-only" onClick={props.onClose} aria-label="关闭题目列表">
+          <X size={18} />
+        </button>
       </div>
-      <button className="btn primary new-btn" onClick={props.onNew} disabled={props.disabled}>
-        ＋ 新题目
-      </button>
-      <button className={`btn demo-btn ${props.demoActive ? 'active' : ''}`} onClick={props.onDemo} disabled={props.disabled}>
-        🎬 示例讲解
-      </button>
-      <div className="conv-filter" role="tablist">
-        <button className={`chip ${filter === 'all' ? 'active' : ''}`} onClick={() => setFilter('all')} role="tab" aria-selected={filter === 'all'}>
+
+      <div className="sidebar-actions">
+        <button className="btn primary block new-btn" onClick={props.onNew} disabled={props.disabled}>
+          <Plus size={16} aria-hidden="true" />
+          新题目
+        </button>
+        <button className={`nav-btn ${props.demoActive ? 'active' : ''}`} onClick={props.onDemo} disabled={props.disabled}>
+          <Shapes size={16} aria-hidden="true" />
+          示例讲解
+        </button>
+      </div>
+
+      <div className="segmented conv-filter" role="tablist">
+        <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')} role="tab" aria-selected={filter === 'all'}>
           全部
         </button>
-        <button className={`chip ${filter === 'starred' ? 'active' : ''}`} onClick={() => setFilter('starred')} role="tab" aria-selected={filter === 'starred'}>
-          ★ 错题本{starredCount ? ` ${starredCount}` : ''}
+        <button className={filter === 'starred' ? 'active' : ''} onClick={() => setFilter('starred')} role="tab" aria-selected={filter === 'starred'}>
+          错题本
+          {starredCount > 0 && <span className="count">{starredCount}</span>}
         </button>
       </div>
+
       {props.conversations.length > 6 && (
-        <input className="conv-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索题目或笔记" aria-label="搜索题目" />
+        <label className="conv-search">
+          <Search size={14} aria-hidden="true" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索题目或笔记" aria-label="搜索题目" />
+        </label>
       )}
+
       <nav className="conv-list" aria-label="题目列表">
         {shown.length === 0 && (
-          <p className="muted small pad">
-            {filter === 'starred' ? '错题本是空的。做错或想复习的题，点题目右上角的 ☆ 收藏。' : q ? '没有找到' : '还没有记录'}
+          <p className="conv-empty">
+            {filter === 'starred'
+              ? '错题本是空的。做错或想复习的题，点题目右上角的星标收藏。'
+              : q
+                ? '没有找到'
+                : '还没有记录'}
           </p>
         )}
-        {shown.map((c) => (
-          <div key={c.id} className={`conv-item ${c.id === props.currentId ? 'active' : ''}`}>
-            <button className="conv-main" onClick={() => props.onSelect(c.id)} disabled={props.disabled}>
-              <span className="conv-title">
-                {c.starred && <span className="star-mark">★ </span>}
-                {c.title}
-              </span>
-              <span className="conv-time">{formatTime(c.updatedAt)}</span>
-            </button>
-            <div className="conv-actions">
-              <button
-                className="icon-btn small"
-                title="重命名"
-                aria-label={`重命名 ${c.title}`}
-                onClick={() => {
-                  const title = prompt('新的标题', c.title)?.trim();
-                  if (title) props.onRename(c.id, title);
-                }}
-              >
-                ✎
-              </button>
-              <button
-                className="icon-btn small"
-                title="删除"
-                aria-label={`删除 ${c.title}`}
-                onClick={() => props.onDelete(c.id)}
-                disabled={props.disabled}
-              >
-                🗑
-              </button>
+        {shown.map((c) => {
+          const group = filter === 'all' && !q ? groupOf(c.updatedAt) : '';
+          const header = group && group !== lastGroup ? group : '';
+          lastGroup = group;
+          const isEditing = editing?.id === c.id;
+          return (
+            <div key={c.id}>
+              {header && <div className="conv-group">{header}</div>}
+              <div className={`conv-item ${c.id === props.currentId ? 'active' : ''}`}>
+                {isEditing ? (
+                  <form
+                    className="conv-rename"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      commitRename();
+                    }}
+                  >
+                    <input
+                      autoFocus
+                      value={editing.title}
+                      onChange={(e) => setEditing({ id: c.id, title: e.target.value })}
+                      onKeyDown={(e) => e.key === 'Escape' && setEditing(null)}
+                      onBlur={commitRename}
+                      aria-label="新的标题"
+                      maxLength={100}
+                    />
+                    <button className="icon-btn small" type="submit" aria-label="保存标题" onMouseDown={(e) => e.preventDefault()}>
+                      <Check size={14} />
+                    </button>
+                  </form>
+                ) : (
+                  <>
+                    <button className="conv-main" onClick={() => props.onSelect(c.id)} disabled={props.disabled}>
+                      <span className="conv-title">
+                        {c.starred && <Star size={12} className="star-mark" aria-label="已收藏" />}
+                        {c.title}
+                      </span>
+                      <span className="conv-time">{formatTime(c.updatedAt)}</span>
+                    </button>
+                    <div className="conv-actions">
+                      <button
+                        className="icon-btn small"
+                        title="重命名"
+                        aria-label={`重命名 ${c.title}`}
+                        onClick={() => setEditing({ id: c.id, title: c.title })}
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        className="icon-btn small danger-hover"
+                        title="删除"
+                        aria-label={`删除 ${c.title}`}
+                        onClick={() => props.onDelete(c.id)}
+                        disabled={props.disabled}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
     </aside>
   );

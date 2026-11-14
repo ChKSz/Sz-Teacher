@@ -1,6 +1,7 @@
 // 开发用：预览任意剧本 JSON（通过 window.__setScene 注入），用于检查模型生成的剧本。
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import './fonts.ts';
 import 'katex/dist/katex.min.css';
 import './styles.css';
 import { ScenePlayer } from './scene/ScenePlayer.tsx';

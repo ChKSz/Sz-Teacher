@@ -1,4 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { Camera, Check, Copy, MessageCircleQuestion, Shapes, Square, Volume2 } from 'lucide-react';
+import { Logo } from './Logo.tsx';
 import { renderMarkdown, toSpeechText } from '../markdown.ts';
 import { speak, speechSupported, type SpeakHandle } from '../speech.ts';
 import { SceneSection } from '../scene/SceneSection.tsx';
@@ -29,7 +31,8 @@ function SpeakButton({ text, settings }: { text: string; settings: PublicSetting
   };
   return (
     <button className="msg-action" onClick={toggle}>
-      {handle ? '⏹ 停止朗读' : '🔊 朗读'}
+      {handle ? <Square size={14} aria-hidden="true" /> : <Volume2 size={14} aria-hidden="true" />}
+      {handle ? '停止朗读' : '朗读'}
     </button>
   );
 }
@@ -82,7 +85,7 @@ function MessageItem({
   }
   return (
     <div className={`msg assistant ${message.status === 'error' ? 'is-error' : ''}`}>
-      <div className="avatar">📐</div>
+      <div className="avatar"><Logo size={30} /></div>
       <div className="bubble">
         <Markdown text={message.content} />
         <div className="msg-actions">
@@ -96,7 +99,8 @@ function MessageItem({
               });
             }}
           >
-            {copied ? '✓ 已复制' : '📋 复制'}
+            {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+            {copied ? '已复制' : '复制'}
           </button>
         </div>
         {message.status === 'done' && (sceneable || message.scene) && (
@@ -121,6 +125,7 @@ export function ChatView(props: {
   onNeedSettings: () => void;
   onScene: (messageId: string, record: SceneRecord) => void;
   onAsk?: (text: string) => void;
+  onDemo: () => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -139,19 +144,41 @@ export function ChatView(props: {
     return (
       <div className="chat-scroll" ref={scrollerRef}>
         <div className="welcome">
-          <div className="welcome-icon">📐</div>
+          <Logo size={48} />
           <h2>今天想弄懂哪道题？</h2>
-          <p className="muted">输入题目，或者拍照上传。动点、几何、函数都可以问。</p>
+          <p className="welcome-sub">输入题目，或者拍照上传。动点、几何、函数都可以问。</p>
           {!props.providerReady && (
-            <p className="warn-text">
+            <p className="notice warn">
               还没有配置模型供应商，<button className="link-btn" onClick={props.onNeedSettings}>去设置</button>
             </p>
           )}
-          <ul className="tips">
-            <li>📷 拍题时尽量对准、拍清楚，一次拍一道题</li>
-            <li>🧩 看不懂某一步，可以直接追问"第 3 步为什么这样作辅助线"</li>
-            <li>🔊 每个回答下面都可以点"朗读"</li>
-          </ul>
+          <div className="tips">
+            <div className="tip">
+              <Camera size={18} aria-hidden="true" />
+              <div>
+                <strong>拍题</strong>
+                <span>尽量对准、拍清楚，一次拍一道题</span>
+              </div>
+            </div>
+            <div className="tip">
+              <MessageCircleQuestion size={18} aria-hidden="true" />
+              <div>
+                <strong>追问</strong>
+                <span>看不懂某一步，直接问“第 3 步为什么这样作辅助线”</span>
+              </div>
+            </div>
+            <div className="tip">
+              <Volume2 size={18} aria-hidden="true" />
+              <div>
+                <strong>朗读与动画</strong>
+                <span>每个回答都能朗读，还能生成一步步的几何动画</span>
+              </div>
+            </div>
+          </div>
+          <button className="link-btn demo-link" onClick={props.onDemo}>
+            <Shapes size={15} aria-hidden="true" />
+            先看看示例讲解
+          </button>
         </div>
       </div>
     );
@@ -172,7 +199,7 @@ export function ChatView(props: {
         ))}
         {props.streaming && (
           <div className="msg assistant streaming">
-            <div className="avatar">📐</div>
+            <div className="avatar"><Logo size={30} /></div>
             <div className="bubble">
               {props.streaming.text ? (
                 <Markdown text={props.streaming.text} />

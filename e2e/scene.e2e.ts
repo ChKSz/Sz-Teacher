@@ -37,7 +37,7 @@ after(async () => {
 });
 
 test('示例讲解：每个示例都能画出图形并逐步播放', async () => {
-  await page.getByRole('button', { name: '🎬 示例讲解' }).click();
+  await page.getByRole('button', { name: '示例讲解', exact: true }).click();
   await page.locator('.scene-canvas').waitFor();
   assert.match(page.url(), /#demo$/);
 

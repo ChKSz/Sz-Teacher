@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { NotebookPen } from 'lucide-react';
 
 /** 错题笔记：显示在题目上方，可以记录错因和要点。 */
 export function NoteBar(props: {
@@ -19,7 +20,10 @@ export function NoteBar(props: {
         tabIndex={0}
         title="点击编辑"
       >
-        <span className="note-label">📝 笔记</span>
+        <span className="note-label">
+          <NotebookPen size={14} aria-hidden="true" />
+          笔记
+        </span>
         <span className="note-text">{props.note}</span>
       </div>
     );

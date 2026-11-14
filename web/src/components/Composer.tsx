@@ -1,4 +1,5 @@
 import { useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
+import { ArrowUp, Camera, ImagePlus, Square, X } from 'lucide-react';
 import { compressImage } from '../api.ts';
 
 const MAX_IMAGES = 4;
@@ -67,78 +68,79 @@ export function Composer(props: {
     }
   };
 
+  const canSend = !processing && (text.trim() !== '' || images.length > 0);
+
   return (
     <div className="composer">
-      {(images.length > 0 || processing) && (
-        <div className="composer-images">
-          {images.map((url, i) => (
-            <div key={i} className="thumb">
-              <img src={url} alt={`待发送图片 ${i + 1}`} />
-              <button
-                className="thumb-remove"
-                onClick={() => setImages(images.filter((_, j) => j !== i))}
-                aria-label="移除图片"
-              >
-                ×
-              </button>
-            </div>
-          ))}
-          {processing && <div className="thumb loading">处理中…</div>}
-        </div>
-      )}
-      {localError && <p className="error-text small">{localError}</p>}
-      <div className="composer-row">
-        <button className="icon-btn" onClick={() => cameraRef.current?.click()} title="拍照" aria-label="拍照">
-          📷
-        </button>
-        <button className="icon-btn" onClick={() => fileRef.current?.click()} title="选择图片" aria-label="选择图片">
-          🖼
-        </button>
-        <input
-          ref={cameraRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          hidden
-          onChange={(e) => {
-            void addFiles(Array.from(e.target.files ?? []));
-            e.target.value = '';
-          }}
-        />
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          multiple
-          hidden
-          onChange={(e) => {
-            void addFiles(Array.from(e.target.files ?? []));
-            e.target.value = '';
-          }}
-        />
+      <div className="composer-box">
+        {(images.length > 0 || processing) && (
+          <div className="composer-images">
+            {images.map((url, i) => (
+              <div key={i} className="thumb">
+                <img src={url} alt={`待发送图片 ${i + 1}`} />
+                <button className="thumb-remove" onClick={() => setImages(images.filter((_, j) => j !== i))} aria-label="移除图片">
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+            {processing && (
+              <div className="thumb loading">
+                <span className="spinner" />
+              </div>
+            )}
+          </div>
+        )}
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           rows={1}
-          placeholder={props.isFollowUp ? '继续追问，比如"第二步为什么？"' : '输入题目，或粘贴/拍照上传图片（Enter 发送，Shift+Enter 换行）'}
+          placeholder={props.isFollowUp ? '继续追问，比如“第二步为什么？”' : '输入题目，或粘贴、拍照上传图片'}
           aria-label="输入题目"
         />
-        {props.busy ? (
-          <button className="btn stop" onClick={props.onStop}>
-            停止
+        <div className="composer-row">
+          <button className="icon-btn" onClick={() => cameraRef.current?.click()} title="拍照" aria-label="拍照">
+            <Camera size={18} />
           </button>
-        ) : (
-          <button
-            className="btn primary"
-            onClick={() => void submit()}
-            disabled={processing || (!text.trim() && images.length === 0)}
-          >
-            发送
+          <button className="icon-btn" onClick={() => fileRef.current?.click()} title="选择图片" aria-label="选择图片">
+            <ImagePlus size={18} />
           </button>
-        )}
+          <input
+            ref={cameraRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            onChange={(e) => {
+              void addFiles(Array.from(e.target.files ?? []));
+              e.target.value = '';
+            }}
+          />
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              void addFiles(Array.from(e.target.files ?? []));
+              e.target.value = '';
+            }}
+          />
+          <span className="composer-hint">Enter 发送 · Shift+Enter 换行</span>
+          {props.busy ? (
+            <button className="send-btn stop" onClick={props.onStop} aria-label="停止" title="停止生成">
+              <Square size={14} fill="currentColor" />
+            </button>
+          ) : (
+            <button className="send-btn" onClick={() => void submit()} disabled={!canSend} aria-label="发送" title="发送">
+              <ArrowUp size={18} />
+            </button>
+          )}
+        </div>
       </div>
+      {localError && <p className="error-text small composer-error">{localError}</p>}
     </div>
   );
 }
