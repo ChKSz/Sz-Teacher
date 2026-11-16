@@ -1,9 +1,11 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, Check, Copy, MessageCircleQuestion, Shapes, Square, Volume2 } from 'lucide-react';
+import { RotateCw, Shapes, Square, Volume2 } from 'lucide-react';
 import { Logo } from './Logo.tsx';
 import { renderMarkdown, toSpeechText } from '../markdown.ts';
-import { speak, speechSupported, type SpeakHandle } from '../speech.ts';
+import { speak, speechSupported } from '../speech.ts';
 import { SceneSection } from '../scene/SceneSection.tsx';
+import { usePreparedSpeech } from '../usePreparedSpeech.ts';
+import { CopyButton } from './CopyButton.tsx';
 import type { Message, PublicSettings, SceneRecord } from '../../../shared/types.ts';
 
 const Markdown = memo(function Markdown({ text }: { text: string }) {
@@ -12,29 +14,31 @@ const Markdown = memo(function Markdown({ text }: { text: string }) {
 });
 
 function SpeakButton({ text, settings }: { text: string; settings: PublicSettings | null }) {
-  const [handle, setHandle] = useState<SpeakHandle | null>(null);
-  useEffect(() => () => handle?.stop(), [handle]);
-  if (!speechSupported()) return null;
+  const [playing, setPlaying] = useState(false);
+  const [error, setError] = useState('');
+  const abortRef = useRef<AbortController | null>(null);
+  const options = settings?.tts ?? { rate: 1, voice: '' };
+  const spokenText = useMemo(() => toSpeechText(text), [text]);
+  const prepared = usePreparedSpeech([spokenText], options);
+  useEffect(() => { setPlaying(false); setError(''); return () => abortRef.current?.abort(); }, [prepared.key]);
+  if (!speechSupported(settings?.tts)) return null;
   const toggle = async () => {
-    if (handle) {
-      handle.stop();
-      setHandle(null);
-      return;
-    }
+    if (playing) { abortRef.current?.abort(); setPlaying(false); return; }
+    const abort = new AbortController(); abortRef.current = abort;
+    setPlaying(true); setError('');
     try {
-      const h = await speak(toSpeechText(text), settings?.tts ?? { rate: 1, voice: '' });
-      setHandle(h);
-      h.finished.then(() => setHandle((cur) => (cur === h ? null : cur)));
-    } catch (err) {
-      alert((err as Error).message);
-    }
+      const handle = await speak(spokenText, options, abort.signal, prepared.clips[0]);
+      await handle.finished;
+    } catch (err) { if (!abort.signal.aborted) setError((err as Error).message); }
+    finally { if (abortRef.current === abort) setPlaying(false); }
   };
-  return (
-    <button className="msg-action" onClick={toggle}>
-      {handle ? <Square size={14} aria-hidden="true" /> : <Volume2 size={14} aria-hidden="true" />}
-      {handle ? '停止朗读' : '朗读'}
+  return <>
+    <button className="msg-action" disabled={!prepared.ready} title={prepared.preparing ? '正在准备完整音频，完成后即可朗读' : undefined} onClick={() => void toggle()}>
+      {playing ? <Square size={14} aria-hidden="true" /> : <Volume2 size={14} aria-hidden="true" />}
+      {playing ? '停止朗读' : prepared.preparing ? '语音准备中…' : '朗读'}
     </button>
-  );
+    {(error || prepared.error) && <span className="error-text speech-error" role="alert">{error || prepared.error}<button className="link-btn" onClick={() => { setError(''); prepared.retry(); }}>重新准备语音</button></span>}
+  </>;
 }
 
 /** 学生在动画讲解某一步点"这步没懂"时发出的追问。 */
@@ -49,6 +53,8 @@ function MessageItem({
   onScene,
   onAsk,
   sceneable,
+  onRetry,
+  busy,
 }: {
   message: Message;
   settings: PublicSettings | null;
@@ -56,8 +62,13 @@ function MessageItem({
   onAsk?: (text: string) => void;
   /** 是否提供"生成动画讲解"（首个完整解答或较长的回答）。 */
   sceneable: boolean;
+  onRetry?: () => void;
+  busy: boolean;
 }) {
-  const [copied, setCopied] = useState(false);
+  const actions = <>
+    <button className="msg-action" disabled={busy || !onRetry} onClick={onRetry} title="使用原问题和图片重新请求"><RotateCw size={14} aria-hidden="true" />重试请求</button>
+    <CopyButton text={message.content} />
+  </>;
   if (message.role === 'user') {
     return (
       <div className="msg user">
@@ -72,13 +83,14 @@ function MessageItem({
             </div>
           )}
           {message.content &&
-            (/[$>*]/.test(message.content) ? (
+            (/[$>*]|\\[([]/.test(message.content) ? (
               <div className="user-text user-md">
                 <Markdown text={message.content} />
               </div>
             ) : (
               <div className="user-text">{message.content}</div>
             ))}
+          <div className="msg-actions">{actions}</div>
         </div>
       </div>
     );
@@ -90,18 +102,7 @@ function MessageItem({
         <Markdown text={message.content} />
         <div className="msg-actions">
           <SpeakButton text={message.content} settings={settings} />
-          <button
-            className="msg-action"
-            onClick={() => {
-              navigator.clipboard?.writeText(message.content).then(() => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1500);
-              });
-            }}
-          >
-            {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
-            {copied ? '已复制' : '复制'}
-          </button>
+          {actions}
         </div>
         {message.status === 'done' && (sceneable || message.scene) && (
           <SceneSection
@@ -125,7 +126,10 @@ export function ChatView(props: {
   onNeedSettings: () => void;
   onScene: (messageId: string, record: SceneRecord) => void;
   onAsk?: (text: string) => void;
+  onRetry: (userMessageId: string) => void;
   onDemo: () => void;
+  busy: boolean;
+  onDraft: (text: string) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -152,29 +156,6 @@ export function ChatView(props: {
               还没有配置模型供应商，<button className="link-btn" onClick={props.onNeedSettings}>去设置</button>
             </p>
           )}
-          <div className="tips">
-            <div className="tip">
-              <Camera size={18} aria-hidden="true" />
-              <div>
-                <strong>拍题</strong>
-                <span>尽量对准、拍清楚，一次拍一道题</span>
-              </div>
-            </div>
-            <div className="tip">
-              <MessageCircleQuestion size={18} aria-hidden="true" />
-              <div>
-                <strong>追问</strong>
-                <span>看不懂某一步，直接问“第 3 步为什么这样作辅助线”</span>
-              </div>
-            </div>
-            <div className="tip">
-              <Volume2 size={18} aria-hidden="true" />
-              <div>
-                <strong>朗读与动画</strong>
-                <span>每个回答都能朗读，还能生成一步步的几何动画</span>
-              </div>
-            </div>
-          </div>
           <button className="link-btn demo-link" onClick={props.onDemo}>
             <Shapes size={15} aria-hidden="true" />
             先看看示例讲解
@@ -193,10 +174,19 @@ export function ChatView(props: {
             message={m}
             settings={props.settings}
             onScene={props.onScene}
-            onAsk={props.streaming ? undefined : props.onAsk}
+            onAsk={props.busy ? undefined : props.onAsk}
+            busy={props.busy}
+            onRetry={props.messages.slice(0, i + 1).some((item) => item.role === 'user') ? () => props.onRetry(props.messages.slice(0, i + 1).findLast((item) => item.role === 'user')!.id) : undefined}
             sceneable={m.role === 'assistant' && (props.messages.findIndex((x) => x.role === 'assistant') === i || m.content.length > 600)}
           />
         ))}
+        {!props.busy && props.messages.some((m) => m.role === 'assistant' && m.status === 'done') && (
+          <div className="quick-questions" aria-label="快捷追问">
+            <button className="btn" onClick={() => props.onAsk?.('请换一种更容易理解的方式讲解，重点说明关键步骤。')}>换种讲法</button>
+            <button className="btn" onClick={() => props.onAsk?.('请只给我下一条提示，暂时不要公布完整答案，让我自己试试。')}>给我提示</button>
+            <button className="btn" onClick={() => props.onDraft('请检查我的解法，指出有问题的步骤。我的解法是：\n')}>检查我的解法</button>
+          </div>
+        )}
         {props.streaming && (
           <div className="msg assistant streaming">
             <div className="avatar"><Logo size={30} /></div>

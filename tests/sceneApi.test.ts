@@ -104,6 +104,43 @@ describe('生成动画讲解', () => {
     const userMessageId = detail.messages[0]!.id;
     expect((await t.request(`/api/messages/${userMessageId}/scene`, { method: 'POST' })).status).toBe(404);
   });
+
+  it('生成期间可查询状态并防止重复生成，完成后列表和详情一致', async () => {
+    const { conversationId, messageId } = await ask();
+    let finish!: (value: string) => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    provider.reply = () => { entered(); return new Promise<string>((resolve) => { finish = resolve; }); };
+    const response = await t.request(`/api/messages/${messageId}/scene`, { method: 'POST' });
+    const reading = readEvents(response);
+    await started;
+    try {
+      expect((await (await t.request(`/api/messages/${messageId}/scene`)).json()).job.status).toBe('working');
+      expect((await (await t.request('/api/conversations')).json())[0].sceneStatus).toBe('working');
+      expect((await t.request(`/api/messages/${messageId}/scene`, { method: 'POST' })).status).toBe(409);
+    } finally { finish(JSON.stringify(rectangleMovingPoint)); }
+    await reading;
+    const status = await (await t.request(`/api/messages/${messageId}/scene`)).json();
+    expect(status.job.status).toBe('done');
+    expect(status.record.scene.title).toBe(rectangleMovingPoint.title);
+    expect((await (await t.request(`/api/conversations/${conversationId}`)).json()).messages[1].sceneJob.status).toBe('done');
+  });
+
+  it('重新生成失败保留旧动画，状态接口返回错误供刷新后重试', async () => {
+    const { messageId } = await ask();
+    provider.reply = JSON.stringify(rectangleMovingPoint);
+    await readEvents(await t.request(`/api/messages/${messageId}/scene`, { method: 'POST' }));
+    const before = await (await t.request(`/api/messages/${messageId}/scene`)).json();
+    provider.failWith = 429;
+    await readEvents(await t.request(`/api/messages/${messageId}/scene`, { method: 'POST' }));
+    const failed = await (await t.request(`/api/messages/${messageId}/scene`)).json();
+    expect(failed.record.id).toBe(before.record.id);
+    expect(failed.job.status).toBe('error');
+    expect(failed.job.message).toContain('请求太频繁');
+    provider.failWith = null;
+    await readEvents(await t.request(`/api/messages/${messageId}/scene`, { method: 'POST' }));
+    expect((await (await t.request(`/api/messages/${messageId}/scene`)).json()).job.status).toBe('done');
+  });
 });
 
 describe('提取 JSON', () => {

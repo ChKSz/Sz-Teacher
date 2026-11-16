@@ -1,15 +1,17 @@
 import type { Db } from './db.ts';
+import { createHash } from 'node:crypto';
 import type { ServerConfig } from './config.ts';
-import type { PublicSettings, ReasoningEffort, SettingsUpdate, TeachingStyle } from '../shared/types.ts';
+import type { PublicSettings, PublicTts, ReasoningEffort, SettingsUpdate, TeachingStyle } from '../shared/types.ts';
 
 /** 保存在数据库里的完整设置（包含密钥，只在服务器上使用）。 */
 export interface Settings {
   provider: { baseUrl: string; apiKey: string };
   solveModel: string;
   sceneModel: string;
+  models: string[];
   reasoningEffort: ReasoningEffort;
   teachingStyle: TeachingStyle;
-  tts: { rate: number; voice: string };
+  tts: Omit<PublicTts, 'hasApiKey' | 'apiKeyMasked'> & { apiKey: string };
 }
 
 const KEY = 'app';
@@ -22,9 +24,11 @@ export function defaultSettings(config: ServerConfig): Settings {
     },
     solveModel: config.initialProvider.model,
     sceneModel: config.initialProvider.model,
+    models: [],
     reasoningEffort: '',
     teachingStyle: 'direct',
-    tts: { rate: 1, voice: '' },
+    tts: { rate: 1, voice: '', provider: config.initialTts?.apiKey ? 'xiaomi' : 'browser', apiKey: config.initialTts?.apiKey ?? '',
+      baseUrl: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2.5-tts', xiaomiVoice: 'mimo_default', style: '用自然、耐心的普通话讲解数学，吐字清晰，在关键步骤之间稍作停顿。' },
   };
 }
 
@@ -54,6 +58,7 @@ export function maskKey(key: string): string {
 }
 
 export function toPublic(settings: Settings): PublicSettings {
+  const { apiKey: ttsKey, ...tts } = settings.tts;
   return {
     provider: {
       baseUrl: settings.provider.baseUrl,
@@ -62,9 +67,10 @@ export function toPublic(settings: Settings): PublicSettings {
     },
     solveModel: settings.solveModel,
     sceneModel: settings.sceneModel,
+    models: settings.models,
     reasoningEffort: settings.reasoningEffort,
     teachingStyle: settings.teachingStyle,
-    tts: { ...settings.tts },
+    tts: { ...tts, hasApiKey: !!ttsKey, apiKeyMasked: maskKey(ttsKey), cacheVersion: createHash('sha256').update(JSON.stringify([tts.baseUrl, ttsKey, tts.model, tts.xiaomiVoice, tts.style])).digest('hex').slice(0, 24) },
   };
 }
 
@@ -93,6 +99,7 @@ export function applyUpdate(current: Settings, update: SettingsUpdate): Settings
           throw new Error('Base URL 必须以 http:// 或 https:// 开头');
         }
       }
+      if (url !== current.provider.baseUrl) next.models = [];
       next.provider.baseUrl = url;
     }
     if (update.provider.apiKey !== undefined) next.provider.apiKey = text(update.provider.apiKey, 'API Key');
@@ -108,6 +115,19 @@ export function applyUpdate(current: Settings, update: SettingsUpdate): Settings
     next.teachingStyle = update.teachingStyle;
   }
   if (update.tts) {
+    if (update.tts.provider !== undefined) {
+      if (!['browser', 'xiaomi'].includes(update.tts.provider)) throw new Error('朗读来源不正确');
+      next.tts.provider = update.tts.provider;
+    }
+    for (const key of ['baseUrl', 'apiKey', 'model', 'xiaomiVoice', 'style'] as const) {
+      if (update.tts[key] !== undefined) next.tts[key] = text(update.tts[key], '语音设置').slice(0, key === 'apiKey' ? 4096 : 1000);
+    }
+    next.tts.baseUrl = next.tts.baseUrl.replace(/\/+$/, '');
+    let parsed: URL;
+    try { parsed = new URL(next.tts.baseUrl); } catch { throw new Error('语音接口地址格式不正确'); }
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('语音接口地址必须使用 http:// 或 https://');
+    if (next.tts.baseUrl !== current.tts.baseUrl && current.tts.apiKey && !update.tts.apiKey?.trim()) throw new Error('更换语音接口地址时，请重新填写语音密钥');
+    if (!next.tts.model || !next.tts.xiaomiVoice) throw new Error('请填写语音模型和音色');
     if (update.tts.rate !== undefined) {
       const rate = Number(update.tts.rate);
       if (!Number.isFinite(rate) || rate < 0.5 || rate > 2) throw new Error('语速必须在 0.5 到 2 之间');
@@ -120,6 +140,15 @@ export function applyUpdate(current: Settings, update: SettingsUpdate): Settings
 
 export function updateSettings(db: Db, config: ServerConfig, update: SettingsUpdate): Settings {
   const next = applyUpdate(loadSettings(db, config), update);
+  saveSettings(db, next);
+  return next;
+}
+
+/** 模型列表由服务器向供应商获取后保存，与对应供应商绑定。 */
+export function saveProviderModels(db: Db, settings: Settings, models: string[]): Settings {
+  const next = { ...settings, models };
+  if (!models.includes(next.solveModel)) next.solveModel = models[0]!;
+  if (!models.includes(next.sceneModel)) next.sceneModel = next.solveModel;
   saveSettings(db, next);
   return next;
 }

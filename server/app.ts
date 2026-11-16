@@ -10,12 +10,13 @@ import type { ServerConfig } from './config.ts';
 import type { Db } from './db.ts';
 import * as auth from './auth.ts';
 import * as store from './store.ts';
-import { loadSettings, toPublic, updateSettings } from './settings.ts';
+import { applyUpdate, loadSettings, saveProviderModels, toPublic, updateSettings } from './settings.ts';
+import { SpeechCache } from './speechCache.ts';
 import { chat, listModels, streamChat, LlmError, type ChatMessage, type ContentPart } from './llm.ts';
 import { solveSystemPrompt } from './prompts.ts';
 import { generateScene } from './sceneGen.ts';
 import { UploadStore, mimeOf, MAX_IMAGES_PER_MESSAGE } from './uploads.ts';
-import type { AuthStatus, ChatEvent, Message, ProviderTestResult, SceneEvent, SettingsUpdate } from '../shared/types.ts';
+import type { AuthStatus, ChatEvent, ConversationUpdate, Message, ProviderTestResult, SceneEvent, SettingsUpdate } from '../shared/types.ts';
 
 export const SESSION_COOKIE = 'sz_session';
 const MAX_TEXT_CHARS = 20_000;
@@ -47,6 +48,8 @@ async function readJson<T>(c: Context): Promise<T> {
 
 export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter() }: AppDeps): Hono {
   const app = new Hono();
+  const speechCache = new SpeechCache(config.dataDir);
+  db.prepare("UPDATE scene_jobs SET status = 'error', message = '服务器重启，生成已中断，请重试', updated_at = ? WHERE status = 'working'").run(Date.now());
 
   const clientIp = (c: Context): string => {
     if (config.trustProxy) {
@@ -196,6 +199,60 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
     }
   });
 
+  app.post('/api/settings/models', async (c) => {
+    const body = await readJson<{ baseUrl?: string; apiKey?: string }>(c);
+    const saved = loadSettings(db, config);
+    let candidate;
+    try {
+      candidate = applyUpdate(saved, { provider: { baseUrl: body.baseUrl, ...(body.apiKey?.trim() ? { apiKey: body.apiKey } : {}) } });
+    } catch (err) { throw new HttpError(400, (err as Error).message); }
+    if (candidate.provider.baseUrl !== saved.provider.baseUrl && !body.apiKey?.trim()) throw new HttpError(400, '更换接口地址后，请同时填写密钥再获取模型列表');
+    try {
+      const models = [...new Set(await listModels(candidate.provider))].filter(Boolean).slice(0, 1000);
+      if (!models.length) throw new Error('供应商未返回可用模型，请检查接口地址');
+      // 请求期间可能修改了其他设置，只更新此供应商和模型列表。
+      const latest = loadSettings(db, config);
+      return c.json(toPublic(saveProviderModels(db, { ...latest, provider: candidate.provider }, models)));
+    } catch (err) { throw new HttpError(400, (err as Error).message); }
+  });
+
+  app.post('/api/tts/prepare', bodyLimit({ maxSize: 512_000, onError: (c) => c.json({ error: '朗读内容过长' }, 413) }), async (c) => {
+    const body = await readJson<{ texts?: unknown }>(c);
+    if (!Array.isArray(body.texts) || !body.texts.length || body.texts.length > 80 || body.texts.some((text) => typeof text !== 'string' || text.length > 20_000)) throw new HttpError(400, '请提交 1～80 段讲解，每段最多 20000 字');
+    const texts = (body.texts as string[]).map((text) => text.trim());
+    if (!texts.some(Boolean) || texts.join('').length > 120_000) throw new HttpError(400, '朗读内容为空或过长');
+    const settings = loadSettings(db, config);
+    if (settings.tts.provider !== 'xiaomi') throw new HttpError(400, '请先在设置中选择小米语音');
+    if (!settings.tts.apiKey) throw new HttpError(400, '请先在设置中填写小米语音密钥');
+    return c.json(speechCache.prepare(settings.tts, texts));
+  });
+
+  app.get('/api/tts/jobs/:id', (c) => {
+    const job = speechCache.status(c.req.param('id'));
+    if (!job) throw new HttpError(404, '语音准备任务已过期，请重试');
+    c.header('Cache-Control', 'no-store');
+    return c.json(job);
+  });
+
+  app.get('/api/tts/audio/:id', async (c) => {
+    const audio = await speechCache.read(c.req.param('id'));
+    if (!audio) throw new HttpError(404, '语音缓存已过期，请重新准备');
+    return c.body(new Uint8Array(audio), 200, { 'Content-Type': 'audio/wav', 'Cache-Control': 'private, no-store' });
+  });
+
+  app.post('/api/tts', bodyLimit({ maxSize: 100_000, onError: (c) => c.json({ error: '朗读内容过长' }, 413) }), async (c) => {
+    const body = await readJson<{ text?: unknown }>(c);
+    if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 20_000) throw new HttpError(400, '每段朗读内容须为 1～20000 个字符');
+    const settings = loadSettings(db, config);
+    if (settings.tts.provider !== 'xiaomi') throw new HttpError(400, '请先在设置中选择小米语音');
+    try {
+      const id = await speechCache.ensure(settings.tts, body.text.trim());
+      const audio = await speechCache.read(id);
+      if (!audio) throw new Error('语音缓存写入失败，请重试');
+      return c.body(new Uint8Array(audio), 200, { 'Content-Type': 'audio/wav', 'Cache-Control': 'no-store' });
+    } catch (err) { throw new HttpError(400, (err as Error).message); }
+  });
+
   /** 测试连接：可以传入尚未保存的 baseUrl / apiKey；apiKey 留空则用已保存的。 */
   app.post('/api/settings/test', async (c) => {
     const body = await readJson<{ baseUrl?: string; apiKey?: string; model?: string }>(c);
@@ -236,8 +293,8 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
   });
 
   app.patch('/api/conversations/:id', async (c) => {
-    const body = await readJson<{ title?: unknown; starred?: unknown; note?: unknown }>(c);
-    const patch: { title?: string; starred?: boolean; note?: string } = {};
+    const body = await readJson<Record<string, unknown>>(c);
+    const patch: ConversationUpdate = {};
     if (body.title !== undefined) {
       const title = typeof body.title === 'string' ? body.title.trim().slice(0, 100) : '';
       if (!title) throw new HttpError(400, '标题不能为空');
@@ -250,6 +307,16 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
     if (body.note !== undefined) {
       if (typeof body.note !== 'string') throw new HttpError(400, '笔记必须是文字');
       patch.note = body.note.slice(0, 5000);
+    }
+    for (const key of ['knowledgePoint', 'errorReason'] as const) {
+      if (body[key] !== undefined) {
+        if (typeof body[key] !== 'string') throw new HttpError(400, '知识点和错因必须是文字');
+        patch[key] = body[key].trim().slice(0, 100);
+      }
+    }
+    if (body.reviewStatus !== undefined) {
+      if (body.reviewStatus !== 'pending' && body.reviewStatus !== 'mastered') throw new HttpError(400, '复习状态不正确');
+      patch.reviewStatus = body.reviewStatus;
     }
     if (!store.updateConversation(db, c.req.param('id'), patch)) throw new HttpError(404, '会话不存在');
     return c.json({ ok: true });
@@ -286,10 +353,11 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
       onError: (c) => c.json({ error: '请求太大（图片过多或过大）' }, 413),
     }),
     async (c) => {
-      const body = await readJson<{ conversationId?: unknown; text?: unknown; images?: unknown }>(c);
-      const text = typeof body.text === 'string' ? body.text.trim() : '';
+      const body = await readJson<{ conversationId?: unknown; text?: unknown; images?: unknown; retryMessageId?: unknown }>(c);
+      let text = typeof body.text === 'string' ? body.text.trim() : '';
       const rawImages = Array.isArray(body.images) ? body.images : [];
-      if (!text && rawImages.length === 0) throw new HttpError(400, '请输入题目或上传图片');
+      const retryId = typeof body.retryMessageId === 'string' ? body.retryMessageId : '';
+      if (!retryId && !text && rawImages.length === 0) throw new HttpError(400, '请输入题目或上传图片');
       if (text.length > MAX_TEXT_CHARS) throw new HttpError(400, '文字太长');
       if (rawImages.length > MAX_IMAGES_PER_MESSAGE) {
         throw new HttpError(400, `一次最多上传 ${MAX_IMAGES_PER_MESSAGE} 张图片`);
@@ -297,15 +365,26 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
 
       let conversationId = typeof body.conversationId === 'string' ? body.conversationId : '';
       let title = '';
+      let retryHistory: Message[] | undefined;
+      let original: Message | undefined;
       if (conversationId) {
         const existing = store.getConversation(db, conversationId);
         if (!existing) throw new HttpError(404, '会话不存在');
         title = existing.title;
+        if (retryId) {
+          const index = existing.messages.findIndex((message) => message.id === retryId && message.role === 'user');
+          if (index < 0) throw new HttpError(404, '找不到要重试的原问题');
+          original = existing.messages[index]!;
+          text = original.content;
+          retryHistory = existing.messages.slice(0, index + 1);
+          if (original.images.some((name) => !uploads.resolve(name))) throw new HttpError(400, '原题图片已丢失，请重新上传');
+        }
       }
+      if (retryId && !original) throw new HttpError(400, '重试时需要指定原会话');
 
-      const savedImages: string[] = [];
+      const savedImages: string[] = original ? [...original.images] : [];
       try {
-        for (const image of rawImages) savedImages.push(uploads.saveDataUrl(image));
+        if (!original) for (const image of rawImages) savedImages.push(uploads.saveDataUrl(image));
       } catch (err) {
         uploads.remove(savedImages);
         throw new HttpError(400, (err as Error).message);
@@ -323,7 +402,8 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
       });
 
       const settings = loadSettings(db, config);
-      const history = store.getConversation(db, conversationId)!.messages;
+      // 重试按原问题当时的上下文重新请求，新结果追加保存，避免混入后续追问。
+      const history = retryHistory ?? store.getConversation(db, conversationId)!.messages;
       const messages = buildModelMessages(history, settings.teachingStyle, uploads);
       const assistantMessageId = store.newId();
       const finalConversationId = conversationId;
@@ -355,6 +435,14 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
 
         // 学生中途关掉页面时，已经生成的部分仍然保存下来。
         if (stream.aborted && !failure) failure = '生成被中断';
+        if (!failure && history[0]?.images.length && !history[0]?.content) {
+          const generatedTitle = store.titleFromAnswer(answer);
+          // 尊重用户手动改过的标题。
+          if (generatedTitle && store.getConversation(db, finalConversationId)?.title === '图片题目') {
+            store.updateConversation(db, finalConversationId, { title: generatedTitle });
+            title = generatedTitle;
+          }
+        }
         const content = failure ? (answer ? `${answer}\n\n> ⚠️ ${failure}` : failure) : answer;
         let saved: Message;
         try {
@@ -385,6 +473,12 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
    * 响应：SSE，事件见 SceneEvent。剧本生成通常需要 30~90 秒。
    */
   const generating = new Set<string>();
+  app.get('/api/messages/:id/scene', (c) => {
+    const message = store.getMessage(db, c.req.param('id'));
+    if (!message || message.role !== 'assistant') throw new HttpError(404, '回答不存在');
+    const detail = store.getConversation(db, message.conversationId)!;
+    return c.json({ job: store.getSceneJob(db, message.id) ?? null, record: detail.messages.find((m) => m.id === message.id)?.scene ?? null });
+  });
   app.post('/api/messages/:id/scene', async (c) => {
     const messageId = c.req.param('id');
     const message = store.getMessage(db, messageId);
@@ -404,6 +498,7 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
     const settings = loadSettings(db, config);
 
     generating.add(messageId);
+    store.setSceneJob(db, messageId, 'working', '正在设计动画讲解…');
     return streamSSE(c, async (stream) => {
       const send = (event: SceneEvent) => stream.writeSSE({ data: JSON.stringify(event) });
       // 学生关掉页面也继续生成，生成好后保存，下次打开就能看
@@ -419,20 +514,26 @@ export function createApp({ config, db, uploads, limiter = new auth.LoginLimiter
           images,
           solution: message.content,
           onProgress: (text) => {
+            if (store.getMessage(db, messageId)) store.setSceneJob(db, messageId, 'working', text);
             if (!stream.aborted) void send({ type: 'progress', message: text }).catch(() => {});
           },
         });
         if (!result.scene) {
+          const reason = `这道题暂时做不出动画讲解（${result.problems.slice(0, 2).join('；') || '模型输出无法使用'}）`;
+          if (store.getMessage(db, messageId)) store.setSceneJob(db, messageId, 'error', reason);
           if (!stream.aborted) {
-            await send({ type: 'error', message: `这道题暂时做不出动画讲解（${result.problems.slice(0, 2).join('；') || '模型输出无法使用'}）` });
+            await send({ type: 'error', message: reason });
           }
           return;
         }
         const record = store.saveScene(db, messageId, result.scene, result.verified, result.problems);
+        store.setSceneJob(db, messageId, 'done', '动画讲解已完成');
         if (!stream.aborted) await send({ type: 'done', record });
       } catch (err) {
         if (!(err instanceof LlmError)) console.error(err);
-        if (!stream.aborted) await send({ type: 'error', message: err instanceof LlmError ? err.message : '生成讲解失败' });
+        const reason = err instanceof LlmError ? err.message : '生成讲解失败';
+        if (store.getMessage(db, messageId)) store.setSceneJob(db, messageId, 'error', reason);
+        if (!stream.aborted) await send({ type: 'error', message: reason });
       } finally {
         clearInterval(keepAlive);
         generating.delete(messageId);
@@ -466,7 +567,10 @@ export function buildModelMessages(
   uploads: UploadStore,
 ): ChatMessage[] {
   const recent = history.filter((m) => m.status === 'done' || m.role === 'user').slice(-HISTORY_LIMIT);
-  const messages: ChatMessage[] = [{ role: 'system', content: solveSystemPrompt(style) }];
+  const imageTitle = history[0]?.images.length && !history[0]?.content
+    ? '\n请在第一次解答的开头用“### 题目：简短标题”概括图片中的题目，标题不超过24字，包含知识点或关键条件，随后正常讲解。'
+    : '';
+  const messages: ChatMessage[] = [{ role: 'system', content: solveSystemPrompt(style) + imageTitle }];
   for (const m of recent) {
     if (m.role === 'assistant') {
       messages.push({ role: 'assistant', content: m.content });

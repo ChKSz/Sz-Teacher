@@ -7,7 +7,7 @@ module.exports = {
       interpreter: 'node',
       node_args: '--env-file-if-exists=.env',
       cwd: __dirname,
-      instances: 1, // SQLite 单文件数据库，只能运行一个实例
+      instances: 1, // 后台生成任务保存在进程内，当前部署只运行一个实例
       autorestart: true,
       max_memory_restart: '500M',
       env: {

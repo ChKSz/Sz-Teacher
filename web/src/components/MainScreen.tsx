@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Menu, NotebookPen, Settings, Star, X } from 'lucide-react';
+import { Menu, NotebookPen, PanelLeftOpen, Settings, Star, X } from 'lucide-react';
 import { api, sendChat } from '../api.ts';
 import { Sidebar } from './Sidebar.tsx';
 import { ChatView } from './ChatView.tsx';
-import { Composer } from './Composer.tsx';
+import { Composer, type ComposerHandle } from './Composer.tsx';
 import { SettingsPanel } from './SettingsPanel.tsx';
 import { DemoGallery } from '../scene/DemoGallery.tsx';
 import { NoteBar } from './NoteBar.tsx';
 import { useConfirm } from './ConfirmDialog.tsx';
 import type { ThemeChoice } from '../theme.ts';
-import type { ConversationDetail, ConversationSummary, Message, PublicSettings } from '../../../shared/types.ts';
+import type { ConversationDetail, ConversationSummary, ConversationUpdate, Message, PublicSettings, SettingsUpdate } from '../../../shared/types.ts';
 
 /** 当前会话 ID 保存在地址栏 #c=<id>，刷新和分享链接后仍能回到同一道题。 */
 function readHashId(): string {
@@ -33,10 +33,16 @@ export function MainScreen({
   const [current, setCurrent] = useState<ConversationDetail | null>(null);
   const [currentId, setCurrentId] = useState(readHashId);
   const [streaming, setStreaming] = useState<{ id: string; text: string } | null>(null);
+  const [sending, setSending] = useState(false);
+  const [styleBusy, setStyleBusy] = useState(false);
+  const composerRef = useRef<ComposerHandle>(null);
   const [error, setError] = useState('');
   const [settings, setSettings] = useState<PublicSettings | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'learning' | 'advanced'>('learning');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('sz-sidebar-collapsed') === 'true');
+  const toggleSidebar = () => setSidebarCollapsed((value) => { localStorage.setItem('sz-sidebar-collapsed', String(!value)); return !value; });
   const [showDemo, setShowDemo] = useState(() => location.hash === '#demo');
   const [showNote, setShowNote] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -69,6 +75,10 @@ export function MainScreen({
   useEffect(() => {
     loadList();
     api.settings().then(setSettings).catch(() => {});
+    const poll = () => { if (document.visibilityState !== 'hidden') loadList(); };
+    const timer = setInterval(poll, 5000);
+    window.addEventListener('focus', poll);
+    return () => { clearInterval(timer); window.removeEventListener('focus', poll); };
   }, [loadList]);
 
   useEffect(() => {
@@ -99,7 +109,7 @@ export function MainScreen({
   }, [currentId, showDemo]);
 
   const select = (id: string) => {
-    if (streaming) return;
+    if (abortRef.current) return;
     setError('');
     setCurrentId(id);
     setShowDemo(false);
@@ -107,14 +117,17 @@ export function MainScreen({
     setSidebarOpen(false);
   };
 
-  const send = async (text: string, images: string[]) => {
+  const send = async (text: string, images: string[], retryMessageId?: string) => {
+    if (abortRef.current) throw new Error('上一条消息还在生成，请稍候');
+    if (currentId && current?.id !== currentId) throw new Error('题目正在加载，请稍候');
     setError('');
+    setSending(true);
     const abort = new AbortController();
     abortRef.current = abort;
     let conversationId = current?.id;
     try {
       await sendChat(
-        { conversationId, text, images },
+        { conversationId, text, images, retryMessageId },
         (event) => {
           switch (event.type) {
             case 'start': {
@@ -131,6 +144,9 @@ export function MainScreen({
                         updatedAt: event.userMessage.createdAt,
                         starred: false,
                         note: '',
+                        knowledgePoint: '',
+                        errorReason: '',
+                        reviewStatus: 'pending',
                         messages: [],
                       };
                 return { ...base, messages: [...base.messages, event.userMessage] };
@@ -163,6 +179,7 @@ export function MainScreen({
       throw err;
     } finally {
       setStreaming(null);
+      setSending(false);
       abortRef.current = null;
       loadList();
     }
@@ -195,16 +212,26 @@ export function MainScreen({
     }
   };
 
-  const patchConversation = async (id: string, patch: { title?: string; starred?: boolean; note?: string }) => {
+  const patchConversation = async (id: string, patch: ConversationUpdate): Promise<boolean> => {
     try {
       await api.updateConversation(id, patch);
       setCurrent((prev) => (prev && prev.id === id ? { ...prev, ...patch } : prev));
       setConversations((list) => list.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+      return true;
     } catch (err) {
       setError((err as Error).message);
+      return false;
     }
   };
   const rename = (id: string, title: string) => patchConversation(id, { title });
+
+  const changePreferences = async (patch: SettingsUpdate): Promise<boolean> => {
+    if (styleBusy) return false;
+    setStyleBusy(true);
+    try { setSettings(await api.saveSettings(patch)); return true; }
+    catch (err) { setError((err as Error).message); return false; }
+    finally { setStyleBusy(false); }
+  };
 
   const logout = async () => {
     await api.logout().catch(() => {});
@@ -212,11 +239,11 @@ export function MainScreen({
   };
 
   return (
-    <div className={`layout ${sidebarOpen ? 'sidebar-open' : ''}`}>
+    <div className={`layout ${sidebarOpen ? 'sidebar-open' : ''} ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <Sidebar
         conversations={conversations}
         currentId={currentId}
-        disabled={streaming !== null}
+        disabled={sending}
         onSelect={select}
         onNew={() => select('')}
         onDelete={remove}
@@ -227,11 +254,13 @@ export function MainScreen({
         }}
         demoActive={showDemo}
         onClose={() => setSidebarOpen(false)}
+        onCollapse={toggleSidebar}
       />
       <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
       <main className="main" ref={mainRef}>
         <div className="top-stack" ref={topRef}>
         <header className="topbar">
+          {sidebarCollapsed && <button className="icon-btn desktop-only" onClick={toggleSidebar} aria-label="展开侧边栏" title="展开侧边栏"><PanelLeftOpen size={18} /></button>}
           <button className="icon-btn mobile-only" onClick={() => setSidebarOpen(true)} aria-label="打开题目列表">
             <Menu size={18} />
           </button>
@@ -260,15 +289,19 @@ export function MainScreen({
             <Settings size={18} />
           </button>
         </header>
-        {!showDemo && current && (showNote || current.note) && (
+        {!showDemo && current && (showNote || current.note || current.starred) && (
           <NoteBar
             key={current.id}
             note={current.note}
+            knowledgePoint={current.knowledgePoint}
+            errorReason={current.errorReason}
+            reviewStatus={current.reviewStatus}
             editing={showNote}
             onEdit={() => setShowNote(true)}
-            onSave={(note) => {
-              void patchConversation(current.id, { note, ...(note && !current.starred ? { starred: true } : {}) });
-              setShowNote(false);
+            onSave={async (patch) => {
+              const saved = await patchConversation(current.id, { ...patch, starred: true });
+              if (saved) setShowNote(false);
+              return saved;
             }}
             onCancel={() => setShowNote(false)}
           />
@@ -282,6 +315,9 @@ export function MainScreen({
             streaming={streaming}
             settings={settings}
             onNeedSettings={() => setShowSettings(true)}
+            busy={sending}
+            onRetry={(userMessageId) => { void send('', [], userMessageId).catch(() => {}); }}
+            onDraft={(text) => composerRef.current?.insertText(text)}
             onAsk={(text) => {
               void send(text, []).catch(() => {});
             }}
@@ -303,12 +339,13 @@ export function MainScreen({
             </button>
           </div>
         )}
-        {!showDemo && <Composer busy={streaming !== null} onSend={send} onStop={stop} isFollowUp={!!current} />}
+        {!showDemo && <Composer ref={composerRef} busy={sending} onSend={send} onStop={stop} isFollowUp={!!current} settings={settings} onPreferences={changePreferences} onSettings={() => { setSettingsTab('advanced'); setShowSettings(true); }} styleBusy={styleBusy || !settings} />}
         </div>
       </main>
       {showSettings && (
         <SettingsPanel
-          onClose={() => setShowSettings(false)}
+          initialTab={settingsTab}
+          onClose={() => { setShowSettings(false); setSettingsTab('learning'); }}
           onSaved={setSettings}
           onLogout={logout}
           theme={theme}

@@ -3,9 +3,10 @@ import { ArrowLeft } from 'lucide-react';
 import { ScenePlayer } from './ScenePlayer.tsx';
 import { EXAMPLES } from '../../../shared/scene/examples.ts';
 import { validateScene } from '../../../shared/scene/validate.ts';
+import type { SpeechOptions } from '../../../shared/types.ts';
 
 /** 示例讲解：不需要模型，用来体验播放器。 */
-export function DemoGallery({ tts, onClose }: { tts: { rate: number; voice: string }; onClose: () => void }) {
+export function DemoGallery({ tts, onClose }: { tts: SpeechOptions; onClose: () => void }) {
   const [index, setIndex] = useState(0);
   const scene = EXAMPLES[index]!;
   return (

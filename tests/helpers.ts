@@ -14,9 +14,11 @@ export interface FakeProvider {
   /** 每次请求 /chat/completions 的请求体。 */
   requests: Record<string, unknown>[];
   /** 下一次对话要返回的内容；函数形式可以按请求决定。 */
-  reply: string | ((body: Record<string, unknown>) => string);
+  reply: string | ((body: Record<string, unknown>) => string | Promise<string>);
   /** 设置后，对话接口返回这个 HTTP 状态码和错误。 */
   failWith: number | null;
+  /** 测试音频准备耗时或失败时使用。 */
+  audioReply?: (body: Record<string, unknown>) => Promise<Buffer>;
   close: () => Promise<void>;
 }
 
@@ -36,7 +38,7 @@ export async function startFakeProvider(apiKey = 'sk-test-key-123456'): Promise<
       res.writeHead(status, { 'content-type': 'application/json' });
       res.end(JSON.stringify(value));
     };
-    if (req.headers.authorization !== `Bearer ${apiKey}`) {
+    if (req.headers.authorization !== `Bearer ${apiKey}` && req.headers['api-key'] !== apiKey) {
       return send(401, { error: { message: `bad key ${req.headers.authorization ?? ''}` } });
     }
     if (req.url === '/v1/models') return send(200, { data: [{ id: 'gpt-6.1-sol' }, { id: 'other-model' }] });
@@ -44,7 +46,11 @@ export async function startFakeProvider(apiKey = 'sk-test-key-123456'): Promise<
     const body = JSON.parse(raw) as Record<string, unknown>;
     state.requests.push(body);
     if (state.failWith) return send(state.failWith, { error: { message: 'upstream failure' } });
-    const text = typeof state.reply === 'function' ? state.reply(body) : state.reply;
+    if (body.audio) {
+      const audio = state.audioReply ? await state.audioReply(body) : TEST_WAV;
+      return send(200, { choices: [{ message: { audio: { data: audio.toString('base64') } } }] });
+    }
+    const text = typeof state.reply === 'function' ? await state.reply(body) : state.reply;
     if (!body.stream) {
       return send(200, { choices: [{ message: { role: 'assistant', content: text } }] });
     }
@@ -122,3 +128,14 @@ export async function readEvents(res: Response): Promise<{ type: string; [key: s
 /** 1x1 红色 PNG。 */
 export const TINY_PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+
+/** 可解码的半秒静音 WAV，用于验证真实音频播放链路。 */
+export const TEST_WAV = (() => {
+  const length = 8000;
+  const data = Buffer.alloc(44 + length);
+  data.write('RIFF', 0); data.writeUInt32LE(36 + length, 4); data.write('WAVEfmt ', 8);
+  data.writeUInt32LE(16, 16); data.writeUInt16LE(1, 20); data.writeUInt16LE(1, 22);
+  data.writeUInt32LE(8000, 24); data.writeUInt32LE(16000, 28); data.writeUInt16LE(2, 32); data.writeUInt16LE(16, 34);
+  data.write('data', 36); data.writeUInt32LE(length, 40);
+  return data;
+})();

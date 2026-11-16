@@ -12,6 +12,7 @@ export interface ServerConfig {
   /** 位于反向代理后面时，从 X-Forwarded-For 取真实 IP。 */
   trustProxy: boolean;
   initialProvider: { baseUrl: string; apiKey: string; model: string };
+  initialTts?: { apiKey: string };
 }
 
 function flag(value: string | undefined, fallback: boolean): boolean {
@@ -33,5 +34,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       apiKey: env.LLM_API_KEY?.trim() ?? '',
       model: env.LLM_MODEL?.trim() ?? '',
     },
+    initialTts: { apiKey: env.MIMO_API_KEY?.trim() ?? '' },
   };
 }

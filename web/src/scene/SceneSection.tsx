@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, RotateCw, Shapes } from 'lucide-react';
-import { generateScene } from '../api.ts';
+import { api, generateScene } from '../api.ts';
 import { ScenePlayer } from './ScenePlayer.tsx';
 import type { PublicSettings, SceneRecord } from '../../../shared/types.ts';
 
@@ -20,6 +20,42 @@ export function SceneSection(props: {
   const abortRef = useRef<AbortController | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const justMade = useRef(false);
+  const recordRef = useRef(props.record);
+  const onRecordRef = useRef(props.onRecord);
+  const startedRef = useRef(Date.now());
+  const mountedRef = useRef(true);
+  const epochRef = useRef(0);
+  recordRef.current = props.record;
+  onRecordRef.current = props.onRecord;
+
+  const refresh = useCallback(async () => {
+    const epoch = epochRef.current;
+    const result = await api.sceneStatus(props.messageId);
+    if (!mountedRef.current || epoch !== epochRef.current || abortRef.current) return;
+    if (result.job) {
+      setStatus(result.job.status === 'done' ? 'idle' : result.job.status);
+      setProgress(result.job.message);
+      setError(result.job.status === 'error' ? result.job.message : '');
+      startedRef.current = result.job.startedAt;
+    }
+    if (result.record && result.record.id !== recordRef.current?.id) {
+      recordRef.current = result.record;
+      onRecordRef.current(result.record);
+    }
+  }, [props.messageId]);
+
+  useEffect(() => {
+    let active = true;
+    mountedRef.current = true;
+    // 刷新或切换题目后恢复服务器上的生成状态；同时兼容其他设备发起生成。
+    const poll = () => {
+      if (active && document.visibilityState !== 'hidden' && !abortRef.current) void refresh().catch(() => {});
+    };
+    poll();
+    const timer = setInterval(poll, status === 'working' ? 3000 : 15000);
+    window.addEventListener('focus', poll);
+    return () => { active = false; clearInterval(timer); window.removeEventListener('focus', poll); };
+  }, [refresh, status]);
 
   useEffect(() => {
     if (props.record && justMade.current) {
@@ -28,15 +64,22 @@ export function SceneSection(props: {
     }
   }, [props.record]);
 
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; abortRef.current?.abort(); };
+  }, []);
   useEffect(() => {
     if (status !== 'working') return;
-    const started = Date.now();
-    const timer = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000);
+    const update = () => setElapsed(Math.max(0, Math.round((Date.now() - startedRef.current) / 1000)));
+    update();
+    const timer = setInterval(update, 1000);
     return () => clearInterval(timer);
   }, [status]);
 
   const run = async () => {
+    if (abortRef.current || status === 'working') return;
+    epochRef.current += 1;
+    startedRef.current = Date.now();
     setStatus('working');
     setError('');
     setElapsed(0);
@@ -48,6 +91,7 @@ export function SceneSection(props: {
       await generateScene(
         props.messageId,
         (event) => {
+          if (!mountedRef.current) return;
           if (event.type === 'progress') setProgress(event.message);
           if (event.type === 'error') {
             finished = true;
@@ -65,26 +109,41 @@ export function SceneSection(props: {
         abort.signal,
       );
       if (!finished && !abort.signal.aborted) {
-        setError('连接中断。服务器会继续生成，稍后刷新页面查看');
+        setError('连接中断，正在尝试恢复生成进度');
         setStatus('error');
       }
     } catch (err) {
       setError((err as Error).message);
       setStatus('error');
+    } finally {
+      abortRef.current = null;
+      if (mountedRef.current) void refresh().catch(() => {});
     }
   };
 
   const tts = props.settings?.tts ?? { rate: 1, voice: '' };
 
-  if (props.record && status !== 'working') {
-    return (
-      <div className="scene-section" ref={boxRef}>
+  return (
+    <div className="scene-section" ref={boxRef}>
+      {status === 'working' && (
+        <div className="scene-working" role="status">
+          <span className="spinner" />
+          <span>{progress}<span className="muted small scene-wait-hint">已等待 {elapsed} 秒 · 可以先看其他题，完成后会自动保存</span></span>
+        </div>
+      )}
+      {status === 'error' && (
+        <div className="scene-error" role="alert">
+          <p className="error-text small">{props.record ? '重新生成失败，已保留原来的动画。' : ''}{error}</p>
+          <button className="btn" onClick={run}>重试生成</button>
+        </div>
+      )}
+      {props.record ? <>
         <div className="scene-section-head">
           <button className="msg-action" onClick={() => setOpen(!open)}>
             {open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
             {open ? '收起动画讲解' : '展开动画讲解'}
           </button>
-          <button className="msg-action" onClick={run} title="重新生成动画讲解">
+          <button className="msg-action" onClick={run} disabled={status === 'working'} title="重新生成动画讲解">
             <RotateCw size={13} aria-hidden="true" />
             重新生成
           </button>
@@ -100,27 +159,12 @@ export function SceneSection(props: {
             </ul>
           </details>
         )}
-      </div>
-    );
-  }
-
-  return (
-    <div className="scene-section">
-      {status === 'working' ? (
-        <div className="scene-working" role="status">
-          <span className="spinner" />
-          <span>
-            {progress}
-            <span className="muted">　{elapsed} 秒 · 通常需要 30~90 秒</span>
-          </span>
-        </div>
-      ) : (
+      </> : status === 'idle' && (
         <button className="btn scene-btn" onClick={run} aria-label="生成动画讲解">
           <Shapes size={16} aria-hidden="true" />
           生成动画讲解
         </button>
       )}
-      {status === 'error' && <p className="error-text small">{error}</p>}
     </div>
   );
 }

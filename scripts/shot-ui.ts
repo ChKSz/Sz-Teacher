@@ -62,7 +62,7 @@ async function run(scheme: 'light' | 'dark', width: number, height: number, tag:
     await shot('5-sidebar');
     await page.getByRole('button', { name: '关闭题目列表' }).click();
   }
-  await page.getByRole('button', { name: '设置' }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click();
   await shot('6-settings');
   await page.keyboard.press('Escape');
 

@@ -106,3 +106,44 @@ test('手机尺寸下播放器可用', async () => {
   const box = await page.locator('.scene-canvas').boundingBox();
   assert.ok(box && box.width <= 390 && box.width > 300, '画布应适应手机宽度');
 });
+
+test('暂停后重播当前步骤再继续，最后一步暂停也不会跳回开头', async () => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByRole('tab', { name: EXAMPLES[0]!.title }).click();
+  await page.getByRole('button', { name: '回到开头', exact: true }).click();
+  await page.getByRole('button', { name: '播放', exact: true }).click();
+  await page.locator('.step-no', { hasText: '第 1/7 步' }).waitFor();
+  await page.waitForTimeout(250);
+  await page.getByRole('button', { name: '暂停', exact: true }).click();
+  const pausedValue = await page.getByRole('slider').inputValue();
+  await page.waitForTimeout(500);
+  assert.equal(await page.getByRole('slider').inputValue(), pausedValue, '暂停后图形应保持不动');
+  await page.getByRole('button', { name: '重播本步并继续', exact: true }).click();
+  await page.waitForTimeout(1600);
+  assert.match(await page.locator('.step-no').innerText(), /第 1\/7 步/, '应重播第一步，不能直接跳到第二步');
+  await page.getByRole('button', { name: '暂停', exact: true }).click();
+
+  await page.getByRole('tab', { name: '第 6 步', exact: true }).click();
+  await page.getByRole('button', { name: '播放', exact: true }).click();
+  await page.locator('.step-no', { hasText: '第 7/7 步' }).waitFor({ timeout: 10_000 });
+  await page.getByRole('button', { name: '暂停', exact: true }).click();
+  await page.getByRole('button', { name: '重播本步并继续', exact: true }).click();
+  assert.match(await page.locator('.step-no').innerText(), /第 7\/7 步/);
+  await page.getByRole('button', { name: '暂停', exact: true }).click();
+});
+
+test('手机可全屏看图，通过文字目录跳转，退出后保留步骤', async () => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: '全屏看图' }).click();
+  const dialog = page.getByRole('dialog', { name: '全屏动画讲解' });
+  await dialog.waitFor();
+  await page.getByText('步骤目录 · 7 步', { exact: true }).click();
+  await page.locator('.step-directory li').nth(2).getByRole('button').click();
+  await page.locator('.step-no', { hasText: '第 3/7 步' }).waitFor();
+  await page.screenshot({ path: path.join(SHOT_DIR, 'scene-fullscreen-mobile.png') });
+  const next = await page.getByRole('button', { name: '下一步' }).boundingBox();
+  assert.ok(next && next.width >= 44 && next.height >= 44, '手机播放按钮应足够大');
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({ state: 'hidden' });
+  assert.match(await page.locator('.step-no').innerText(), /第 3\/7 步/);
+});

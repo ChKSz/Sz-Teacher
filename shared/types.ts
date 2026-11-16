@@ -3,14 +3,56 @@ import type { Scene } from './scene/types.ts';
 
 export type ReasoningEffort = '' | 'low' | 'medium' | 'high';
 export type TeachingStyle = 'direct' | 'hint-first';
+export type ReviewStatus = 'pending' | 'mastered';
+export interface ConversationUpdate {
+  title?: string;
+  starred?: boolean;
+  note?: string;
+  knowledgePoint?: string;
+  errorReason?: string;
+  reviewStatus?: ReviewStatus;
+}
+
+export interface SceneJob {
+  status: 'working' | 'done' | 'error';
+  message: string;
+  startedAt: number;
+  updatedAt: number;
+}
 
 export interface PublicSettings {
   provider: { baseUrl: string; apiKeyMasked: string; hasApiKey: boolean };
   solveModel: string;
   sceneModel: string;
+  models: string[];
   reasoningEffort: ReasoningEffort;
   teachingStyle: TeachingStyle;
-  tts: { rate: number; voice: string };
+  tts: PublicTts;
+}
+
+export interface SpeechOptions { rate: number; voice: string; provider?: 'browser' | 'xiaomi' }
+export interface PublicTts extends SpeechOptions {
+  cacheVersion?: string;
+  provider: 'browser' | 'xiaomi';
+  baseUrl: string;
+  model: string;
+  xiaomiVoice: string;
+  style: string;
+  hasApiKey: boolean;
+  apiKeyMasked: string;
+}
+
+export interface SpeechJob {
+  id: string;
+  status: 'preparing' | 'ready' | 'error';
+  completed: number;
+  total: number;
+  clips: (string | null)[];
+  error?: string;
+}
+export interface TtsUpdate {
+  rate?: number; voice?: string; provider?: 'browser' | 'xiaomi';
+  baseUrl?: string; apiKey?: string; model?: string; xiaomiVoice?: string; style?: string;
 }
 
 export interface SettingsUpdate {
@@ -19,7 +61,7 @@ export interface SettingsUpdate {
   sceneModel?: string;
   reasoningEffort?: ReasoningEffort;
   teachingStyle?: TeachingStyle;
-  tts?: { rate?: number; voice?: string };
+  tts?: TtsUpdate;
 }
 
 export interface ConversationSummary {
@@ -31,6 +73,10 @@ export interface ConversationSummary {
   starred: boolean;
   /** 错题笔记：错因、要点。 */
   note: string;
+  knowledgePoint: string;
+  errorReason: string;
+  reviewStatus: ReviewStatus;
+  sceneStatus?: SceneJob['status'];
 }
 
 export interface SceneRecord {
@@ -51,6 +97,7 @@ export interface Message {
   createdAt: number;
   /** 这条回答对应的最新讲解剧本。 */
   scene?: SceneRecord;
+  sceneJob?: SceneJob;
 }
 
 export interface ConversationDetail extends ConversationSummary {

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Check, Pencil, Plus, Search, Shapes, Star, Trash2, X } from 'lucide-react';
+import { Check, PanelLeftClose, Pencil, Plus, Search, Shapes, Star, Trash2, X } from 'lucide-react';
+import { Select } from './Select.tsx';
 import { Logo } from './Logo.tsx';
 import type { ConversationSummary } from '../../../shared/types.ts';
 
@@ -31,13 +32,18 @@ export function Sidebar(props: {
   onDemo: () => void;
   demoActive: boolean;
   onClose: () => void;
+  onCollapse: () => void;
 }) {
   const [filter, setFilter] = useState<'all' | 'starred'>('all');
   const [query, setQuery] = useState('');
+  const [reviewFilter, setReviewFilter] = useState('all');
+  const [knowledgeFilter, setKnowledgeFilter] = useState('');
+  const knowledgePoints = [...new Set(props.conversations.filter((c) => c.starred).map((c) => c.knowledgePoint).filter(Boolean))];
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const q = query.trim().toLowerCase();
   const shown = props.conversations.filter(
-    (c) => (filter === 'all' || c.starred) && (!q || c.title.toLowerCase().includes(q) || c.note.toLowerCase().includes(q)),
+    (c) => (filter === 'all' || (c.starred && (reviewFilter === 'all' || c.reviewStatus === reviewFilter) && (!knowledgeFilter || c.knowledgePoint === knowledgeFilter)))
+      && (!q || [c.title, c.note, c.knowledgePoint, c.errorReason].some((value) => value.toLowerCase().includes(q))),
   );
   const starredCount = props.conversations.filter((c) => c.starred).length;
 
@@ -55,6 +61,7 @@ export function Sidebar(props: {
       <div className="sidebar-head">
         <Logo size={26} />
         <span className="brand">Sz-Teacher</span>
+        <button className="icon-btn desktop-only" onClick={props.onCollapse} aria-label="收起侧边栏" title="收起侧边栏"><PanelLeftClose size={17} /></button>
         <button className="icon-btn mobile-only" onClick={props.onClose} aria-label="关闭题目列表">
           <X size={18} />
         </button>
@@ -81,21 +88,25 @@ export function Sidebar(props: {
         </button>
       </div>
 
-      {props.conversations.length > 6 && (
+      {props.conversations.length > 0 && (
         <label className="conv-search">
           <Search size={14} aria-hidden="true" />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索题目或笔记" aria-label="搜索题目" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索题目、知识点或错因" aria-label="搜索题目" />
         </label>
+      )}
+      {filter === 'starred' && starredCount > 0 && (
+        <div className="review-filters">
+          <Select label="筛选复习状态" value={reviewFilter} onChange={setReviewFilter} options={[{ value: 'all', label: '全部状态' }, { value: 'pending', label: '待复习' }, { value: 'mastered', label: '已掌握' }]} />
+          <Select label="筛选知识点" value={knowledgeFilter} onChange={setKnowledgeFilter} options={[{ value: '', label: '全部知识点' }, ...knowledgePoints.map((value) => ({ value, label: value }))]} />
+        </div>
       )}
 
       <nav className="conv-list" aria-label="题目列表">
         {shown.length === 0 && (
           <p className="conv-empty">
-            {filter === 'starred'
+            {q || (filter === 'starred' && (reviewFilter !== 'all' || knowledgeFilter)) ? '没有符合条件的题目，请调整搜索或筛选条件。' : filter === 'starred'
               ? '错题本是空的。做错或想复习的题，点题目右上角的星标收藏。'
-              : q
-                ? '没有找到'
-                : '还没有记录'}
+              : '还没有记录'}
           </p>
         )}
         {shown.map((c) => {
@@ -136,6 +147,8 @@ export function Sidebar(props: {
                         {c.title}
                       </span>
                       <span className="conv-time">{formatTime(c.updatedAt)}</span>
+                      {c.sceneStatus && <span className={`conv-scene-status ${c.sceneStatus}`}>{c.sceneStatus === 'working' ? '动画生成中…' : c.sceneStatus === 'done' ? '动画已完成' : '动画生成失败'}</span>}
+                      {filter === 'starred' && <span className="conv-review-status">{c.reviewStatus === 'mastered' ? '已掌握' : '待复习'}{c.knowledgePoint ? ` · ${c.knowledgePoint}` : ''}</span>}
                     </button>
                     <div className="conv-actions">
                       <button

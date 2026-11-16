@@ -50,6 +50,18 @@ const MIGRATIONS: string[] = [
   ALTER TABLE conversations ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE conversations ADD COLUMN note TEXT NOT NULL DEFAULT '';
   `,
+  `
+  ALTER TABLE conversations ADD COLUMN knowledge_point TEXT NOT NULL DEFAULT '';
+  ALTER TABLE conversations ADD COLUMN error_reason TEXT NOT NULL DEFAULT '';
+  ALTER TABLE conversations ADD COLUMN review_status TEXT NOT NULL DEFAULT 'pending';
+  CREATE TABLE scene_jobs (
+    message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK (status IN ('working', 'done', 'error')),
+    message TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  `,
 ];
 
 export function openDb(file: string): Db {

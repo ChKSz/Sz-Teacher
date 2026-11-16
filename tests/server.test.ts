@@ -5,7 +5,7 @@ import { createTestApp, readEvents, startFakeProvider, TINY_PNG, type FakeProvid
 import { LoginLimiter, hashPassword, verifyPassword } from '../server/auth.ts';
 import { parseSseLine } from '../server/llm.ts';
 import { applyUpdate, maskKey } from '../server/settings.ts';
-import type { ConversationDetail, ConversationSummary, PublicSettings } from '../shared/types.ts';
+import type { ConversationDetail, ConversationSummary, Message, PublicSettings } from '../shared/types.ts';
 
 let provider: FakeProvider;
 let t: TestApp;
@@ -113,6 +113,33 @@ describe('密码与登录', () => {
 });
 
 describe('设置', () => {
+  it('获取模型后保存供应商与列表，偏好在重新登录后保留且实际用于解题', async () => {
+    await setup();
+    const res = await t.request('/api/settings/models', { method: 'POST', json: { baseUrl: provider.baseUrl } });
+    expect(res.status).toBe(200);
+    expect((await res.json() as PublicSettings).models).toEqual(['gpt-6.1-sol', 'other-model']);
+    await t.request('/api/settings', { method: 'PUT', json: { solveModel: 'other-model', reasoningEffort: 'high', teachingStyle: 'hint-first' } });
+    await t.request('/api/auth/logout', { method: 'POST' });
+    await t.request('/api/auth/login', { method: 'POST', json: { password: 'secret123' } });
+    const saved = await (await t.request('/api/settings')).json() as PublicSettings;
+    expect(saved).toMatchObject({ models: ['gpt-6.1-sol', 'other-model'], solveModel: 'other-model', reasoningEffort: 'high', teachingStyle: 'hint-first' });
+    const chatRes = await t.request('/api/chat', { method: 'POST', json: { text: '怎么计算面积？', images: [] } });
+    await readEvents(chatRes);
+    expect(provider.requests.at(-1)).toMatchObject({ model: 'other-model', reasoning_effort: 'high' });
+    expect(JSON.stringify(provider.requests.at(-1)?.messages)).toContain('启发式');
+  });
+
+  it('模型获取失败或新地址未填密钥时保留原配置', async () => {
+    await setup();
+    await t.request('/api/settings/models', { method: 'POST', json: {} });
+    const before = await (await t.request('/api/settings')).json();
+    const wrong = await t.request('/api/settings/models', { method: 'POST', json: { apiKey: 'invalid' } });
+    expect(wrong.status).toBe(400);
+    const changed = await t.request('/api/settings/models', { method: 'POST', json: { baseUrl: 'https://other.example/v1' } });
+    expect(changed.status).toBe(400);
+    expect(await (await t.request('/api/settings')).json()).toEqual(before);
+  });
+
   it('API Key 只以打码形式返回', async () => {
     await setup();
     const settings = (await (await t.request('/api/settings')).json()) as PublicSettings;
@@ -168,7 +195,8 @@ describe('设置', () => {
       sceneModel: 'a',
       reasoningEffort: '' as const,
       teachingStyle: 'direct' as const,
-      tts: { rate: 1, voice: '' },
+      models: [],
+      tts: { rate: 1, voice: '', provider: 'browser' as const, baseUrl: 'https://api.xiaomimimo.com/v1', apiKey: '', model: 'mimo-v2.5-tts', xiaomiVoice: 'mimo_default', style: '' },
     };
     expect(() => applyUpdate(base, { reasoningEffort: 'extreme' as never })).toThrow();
     expect(applyUpdate(base, { teachingStyle: 'hint-first' }).teachingStyle).toBe('hint-first');
@@ -179,6 +207,37 @@ describe('设置', () => {
 });
 
 describe('解题对话', () => {
+  it('重试按原问题和图片重建请求，保留原记录且不混入后续追问', async () => {
+    await setup();
+    provider.reply = '第一次的回答';
+    const first = await readEvents(await t.request('/api/chat', { method: 'POST', json: { text: '请解答 $x^2=4$', images: [TINY_PNG] } }));
+    const conversationId = first[0]!.conversationId as string;
+    const original = first[0]!.userMessage as Message;
+    const originalRequest = structuredClone(provider.requests.at(-1)!.messages);
+    await readEvents(await t.request('/api/chat', { method: 'POST', json: { conversationId, text: '后续追问' } }));
+    provider.reply = '重新生成的回答';
+    const retry = await readEvents(await t.request('/api/chat', { method: 'POST', json: { conversationId, retryMessageId: original.id } }));
+    expect(provider.requests.at(-1)!.messages).toEqual(originalRequest);
+    expect((retry[0]!.userMessage as Message).images).toEqual(original.images);
+    const detail = await (await t.request(`/api/conversations/${conversationId}`)).json() as ConversationDetail;
+    expect(detail.messages).toHaveLength(6);
+    expect(detail.messages[1]!.content).toBe('第一次的回答');
+    expect(detail.messages.at(-1)!.content).toBe('重新生成的回答');
+    expect(fs.readdirSync(path.join(t.dataDir, 'uploads'))).toHaveLength(1);
+  });
+
+  it('重试拒绝其他会话的消息、回答 ID 和不存在的消息', async () => {
+    await setup();
+    const first = await readEvents(await t.request('/api/chat', { method: 'POST', json: { text: '第一题' } }));
+    const second = await readEvents(await t.request('/api/chat', { method: 'POST', json: { text: '第二题' } }));
+    const conversationId = first[0]!.conversationId;
+    for (const retryMessageId of [(second[0]!.userMessage as Message).id, first[0]!.assistantMessageId, '不存在']) {
+      expect((await t.request('/api/chat', { method: 'POST', json: { conversationId, retryMessageId } })).status).toBe(404);
+    }
+    expect((await t.request('/api/chat', { method: 'POST', json: { retryMessageId: (first[0]!.userMessage as Message).id } })).status).toBe(400);
+    expect(provider.requests).toHaveLength(2);
+  });
+
   it('新题目：创建会话、流式返回、保存记录', async () => {
     await setup();
     provider.reply = '设 $x=2$，**答案：** 4';
@@ -308,6 +367,29 @@ describe('解题对话', () => {
     await readEvents(await t.request('/api/chat', { method: 'POST', json: { text: '题' } }));
     const system = (provider.requests[0]!.messages as { content: string }[])[0]!.content;
     expect(system).toContain('启发式');
+  });
+
+  it('图片题从解答自动提取标题，后续追问不覆盖用户的重命名', async () => {
+    await setup();
+    provider.reply = '### 题目：矩形中的动点与等腰三角形\n\n**答案：** $t=1$';
+    const events = await readEvents(await t.request('/api/chat', { method: 'POST', json: { images: [TINY_PNG] } }));
+    expect(events.at(-1)!.title).toBe('矩形中的动点与等腰三角形');
+    const id = events[0]!.conversationId;
+    await t.request(`/api/conversations/${id}`, { method: 'PATCH', json: { title: '周五复习题' } });
+    await readEvents(await t.request('/api/chat', { method: 'POST', json: { conversationId: id, text: '再讲讲' } }));
+    expect((await (await t.request(`/api/conversations/${id}`)).json()).title).toBe('周五复习题');
+  });
+
+  it('错题分类与掌握状态持久化，非法状态被拒绝', async () => {
+    await setup();
+    const events = await readEvents(await t.request('/api/chat', { method: 'POST', json: { text: '分类讨论' } }));
+    const id = events[0]!.conversationId;
+    const patch = { knowledgePoint: '等腰三角形', errorReason: '漏解', reviewStatus: 'mastered', starred: true };
+    expect((await t.request(`/api/conversations/${id}`, { method: 'PATCH', json: patch })).status).toBe(200);
+    expect(await (await t.request(`/api/conversations/${id}`)).json()).toMatchObject(patch);
+    expect((await (await t.request('/api/conversations')).json())[0]).toMatchObject(patch);
+    expect((await t.request(`/api/conversations/${id}`, { method: 'PATCH', json: { reviewStatus: '其他' } })).status).toBe(400);
+    expect((await t.request(`/api/conversations/${id}`, { method: 'PATCH', json: { knowledgePoint: 42 } })).status).toBe(400);
   });
 });
 

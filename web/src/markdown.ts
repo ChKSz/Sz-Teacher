@@ -51,6 +51,7 @@ export function renderMarkdown(source: string): string {
 export function toSpeechText(source: string): string {
   return source
     .replace(/```[\s\S]*?```/g, '')
+    .replace(/\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)/g, (_, display: string, inline: string) => texToSpeech(display ?? inline))
     .replace(/\$\$?([^$]+)\$\$?/g, (_, tex: string) => texToSpeech(tex))
     .replace(/[#>*_`|]/g, '')
     .replace(/\n{2,}/g, '\n')

@@ -7,6 +7,9 @@ import type {
   PublicSettings,
   SceneEvent,
   SettingsUpdate,
+  ConversationUpdate,
+  SceneJob,
+  SceneRecord,
 } from '../../shared/types.ts';
 
 export class ApiError extends Error {
@@ -62,13 +65,15 @@ export const api = {
   saveSettings: (update: SettingsUpdate) => request<PublicSettings>('/api/settings', { method: 'PUT', json: update }),
   testProvider: (input: { baseUrl?: string; apiKey?: string; model?: string }) =>
     request<ProviderTestResult>('/api/settings/test', { method: 'POST', json: input }),
+  fetchModels: (input: { baseUrl: string; apiKey?: string }) => request<PublicSettings>('/api/settings/models', { method: 'POST', json: input }),
 
   conversations: () => request<ConversationSummary[]>('/api/conversations'),
   conversation: (id: string) => request<ConversationDetail>(`/api/conversations/${encodeURIComponent(id)}`),
-  updateConversation: (id: string, patch: { title?: string; starred?: boolean; note?: string }) =>
+  updateConversation: (id: string, patch: ConversationUpdate) =>
     request(`/api/conversations/${encodeURIComponent(id)}`, { method: 'PATCH', json: patch }),
   deleteConversation: (id: string) =>
     request(`/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  sceneStatus: (id: string) => request<{ job: SceneJob | null; record: SceneRecord | null }>(`/api/messages/${encodeURIComponent(id)}/scene`),
 };
 
 /** 读取 SSE 响应，逐个回调事件。 */
@@ -132,7 +137,7 @@ export function generateScene(messageId: string, onEvent: (event: SceneEvent) =>
 
 /** 发送消息，逐个回调 SSE 事件。 */
 export function sendChat(
-  input: { conversationId?: string; text: string; images: string[] },
+  input: { conversationId?: string; text: string; images: string[]; retryMessageId?: string },
   onEvent: (event: ChatEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
