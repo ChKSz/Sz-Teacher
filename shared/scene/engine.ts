@@ -338,7 +338,7 @@ export function formatNumber(v: number): string {
 }
 
 /** 计算画面范围：包含所有点（在参数取值范围内采样），加上边距。 */
-export function sceneBounds(scene: Scene): { xmin: number; xmax: number; ymin: number; ymax: number } {
+export function sceneBounds(scene: Scene, visible?: ReadonlySet<string>): { xmin: number; xmax: number; ymin: number; ymax: number } {
   const xs: number[] = [];
   const ys: number[] = [];
   const base = defaultParams(scene);
@@ -348,8 +348,17 @@ export function sceneBounds(scene: Scene): { xmin: number; xmax: number; ymin: n
   }
   for (const values of samples) {
     const { objects } = computeScene(scene, values, { traceSamples: 0 });
-    for (const [, c] of objects) {
-      if (c.kind === 'point') {
+    for (const [id, c] of objects) {
+      if (visible && !visible.has(id)) continue;
+      if (c.kind === 'segment' || c.kind === 'line' || c.kind === 'ray') {
+        xs.push(c.a.x, c.b.x);
+        ys.push(c.a.y, c.b.y);
+      } else if (c.kind === 'polygon' || c.kind === 'angle') {
+        for (const p of c.kind === 'polygon' ? c.pts : [c.a, c.o, c.b]) {
+          xs.push(p.x);
+          ys.push(p.y);
+        }
+      } else if (c.kind === 'point') {
         xs.push(c.p.x);
         ys.push(c.p.y);
       } else if (c.kind === 'circle') {

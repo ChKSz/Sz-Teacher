@@ -2,7 +2,7 @@
 import type { SpeechOptions, SpeechJob } from '../../shared/types.ts';
 
 export function speechSupported(options?: Pick<SpeechOptions, 'provider'>): boolean {
-  return typeof window !== 'undefined' && (options?.provider === 'xiaomi' ? 'Audio' in window : 'speechSynthesis' in window);
+  return typeof window !== 'undefined' && (options?.provider === 'xiaomi' ? typeof window.Audio === 'function' : !!window.speechSynthesis && typeof window.SpeechSynthesisUtterance === 'function');
 }
 
 /** 返回中文声音列表；部分浏览器需要等 voiceschanged 事件后才有数据。 */
@@ -12,9 +12,13 @@ export function chineseVoices(): Promise<SpeechSynthesisVoice[]> {
   const now = pick();
   if (now.length) return Promise.resolve(now);
   return new Promise((resolve) => {
-    const done = () => resolve(pick());
-    window.speechSynthesis.addEventListener('voiceschanged', done, { once: true });
-    setTimeout(done, 1500);
+    const done = () => {
+      clearTimeout(timer);
+      window.speechSynthesis.removeEventListener('voiceschanged', done);
+      resolve(pick());
+    };
+    const timer = setTimeout(done, 1500);
+    window.speechSynthesis.addEventListener('voiceschanged', done);
   });
 }
 
@@ -40,58 +44,162 @@ export function splitSentences(text: string): string[] {
 
 export interface SpeakHandle {
   stop: () => void;
+  /** Synchronous controls: call resume directly from a click on mobile. */
+  pause: () => void;
+  resume: () => void;
   finished: Promise<void>;
 }
 
+type SpeechPlayback = Omit<SpeakHandle, 'stop'>;
 let activeSpeech: AbortController | undefined;
+const endedSpeech = (): SpeakHandle => ({ stop() {}, pause() {}, resume() {}, finished: Promise.resolve() });
 
 /** 全应用同时只保留一段朗读，切换来源也会结束旧朗读和等待。 */
 export async function speak(text: string, options: SpeechOptions, signal?: AbortSignal, clip?: PreparedSpeech | null): Promise<SpeakHandle> {
+  if (signal?.aborted) return endedSpeech();
   activeSpeech?.abort();
   const abort = new AbortController();
   activeSpeech = abort;
   const combined = signal ? AbortSignal.any([signal, abort.signal]) : abort.signal;
+  const current = () => activeSpeech === abort && !combined.aborted;
   const clear = () => { if (activeSpeech === abort) activeSpeech = undefined; };
+  let requestedStop = false;
   try {
-    const handle = options.provider === 'xiaomi' ? playPreparedSpeech(clip, options.rate, combined) : await speakBrowser(text, options, combined);
-    return { stop: () => abort.abort(), finished: handle.finished.finally(clear) };
+    const handle = options.provider === 'xiaomi' ? playPreparedSpeech(clip, options.rate, combined) : speakBrowser(text, options, combined);
+    return {
+      stop: () => { if (current()) { requestedStop = true; abort.abort(); } },
+      pause: () => { if (current()) handle.pause(); },
+      resume: () => { if (current()) handle.resume(); },
+      finished: handle.finished.then(() => {
+        if (signal && abort.signal.aborted && !requestedStop && !signal.aborted) throw new Error('朗读被另一段语音打断');
+      }).finally(clear),
+    };
   } catch (err) { clear(); throw err; }
 }
 
-async function speakBrowser(text: string, options: SpeechOptions, signal?: AbortSignal): Promise<SpeakHandle> {
+function speakBrowser(text: string, options: SpeechOptions, signal: AbortSignal): SpeechPlayback {
   if (!speechSupported()) throw new Error('这个浏览器不支持朗读');
-  if (signal?.aborted) return { stop: () => {}, finished: Promise.resolve() };
   const synth = window.speechSynthesis;
   synth.cancel();
-  const voice = chooseVoice(await chineseVoices(), options.voice);
-  // 等待设备加载声音时也可能暂停或切换了步骤，此时不能开始旧朗读。
-  if (signal?.aborted) return { stop: () => {}, finished: Promise.resolve() };
-  let stopped = false;
-  let finishSentence: (() => void) | undefined;
-  const stop = () => {
-    if (stopped) return;
-    stopped = true;
-    synth.cancel();
-    finishSentence?.();
-  };
-  signal?.addEventListener('abort', stop, { once: true });
-  const finished = (async () => {
-    for (const sentence of splitSentences(text)) {
-      if (stopped) return;
-      await new Promise<void>((resolve) => {
-        finishSentence = resolve;
-        const u = new SpeechSynthesisUtterance(sentence);
-        u.lang = voice?.lang ?? 'zh-CN';
-        if (voice) u.voice = voice;
-        u.rate = options.rate;
-        u.onend = () => resolve();
-        u.onerror = () => resolve();
-        synth.speak(u);
-      });
-    }
-  })().finally(() => { stopped = true; signal?.removeEventListener('abort', stop); });
+  // Do not await voices here: Android may require speak() in the direct user click.
+  // With no enumerated Chinese voice yet, let the OS choose by utterance language.
+  const voice = chooseVoice(synth.getVoices().filter(v => /^zh/i.test(v.lang)), options.voice);
+  const sentences = splitSentences(text);
+  let nextIndex = 0;
+  let paused = false;
+  let nativePaused = false;
+  let resumeTimer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+  let current: { suspend: () => void; arm: () => void; dispose: () => void } | undefined;
+  let resolveFinished!: () => void;
+  let rejectFinished!: (err: Error) => void;
+  const finished = new Promise<void>((resolve, reject) => { resolveFinished = resolve; rejectFinished = reject; });
+  const clearResumeTimer = () => { clearTimeout(resumeTimer); resumeTimer = undefined; };
+
+  function finish(error?: Error, cancel = false) {
+    if (settled) return;
+    settled = true;
+    clearResumeTimer();
+    current?.dispose();
+    current = undefined;
+    signal.removeEventListener('abort', stop);
+    if (cancel) { try { synth.cancel(); } catch { /* already settling */ } }
+    // Pausing belongs to the shared synth queue, not just this utterance. Clear
+    // our pause while this handle still owns the queue so a new one can start.
+    if (nativePaused) { try { if (synth.paused) synth.resume(); } catch { /* already settling */ } }
+    if (error) rejectFinished(error); else resolveFinished();
+  }
+  function stop() { finish(undefined, true); }
+
+  function next() {
+    if (settled || paused || current) return;
+    const sentence = sentences[nextIndex++];
+    if (sentence === undefined) { finish(); return; }
+    const u = new SpeechSynthesisUtterance(sentence);
+    u.lang = voice?.lang ?? 'zh-CN';
+    if (voice) u.voice = voice;
+    u.rate = options.rate;
+    let began = false;
+    let remaining = 6000;
+    let deadline = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const suspend = () => {
+      if (timer === undefined) return;
+      clearTimeout(timer);
+      timer = undefined;
+      remaining = Math.max(0, deadline - Date.now());
+    };
+    const arm = () => {
+      if (paused || settled || current !== controls || timer !== undefined) return;
+      deadline = Date.now() + remaining;
+      timer = setTimeout(() => finish(new Error(began ? '浏览器朗读没有正常结束，请重试' : '浏览器未开始朗读，请确认系统已安装中文语音'), true), remaining);
+    };
+    const dispose = () => {
+      suspend();
+      u.onstart = u.onend = u.onerror = null;
+    };
+    const controls = { suspend, arm, dispose };
+    current = controls;
+    u.onstart = () => {
+      if (current !== controls) return;
+      began = true;
+      clearResumeTimer();
+      suspend();
+      remaining = 120_000;
+      arm();
+    };
+    u.onend = () => {
+      if (current !== controls) return;
+      clearResumeTimer();
+      if (!began) { finish(new Error('设备未实际开始朗读，请检查系统语音')); return; }
+      dispose();
+      current = undefined;
+      if (nextIndex >= sentences.length) finish();
+      else queueMicrotask(advance); // pause can gate the next sentence without replaying this one
+    };
+    u.onerror = (event) => {
+      if (current !== controls) return;
+      finish(new Error(
+        event.error === 'not-allowed' ? '浏览器阻止了朗读，请再次点击开始讲解'
+          : event.error === 'language-unavailable' || event.error === 'voice-unavailable' ? '设备没有可用的中文语音，请安装中文语音或切换语音服务'
+            : '浏览器朗读失败，请检查系统中文语音或切换语音服务',
+      ));
+    };
+    arm();
+    try { synth.speak(u); } catch { finish(new Error('无法启动浏览器朗读')); }
+  }
+
+  function advance() {
+    try { next(); } catch { finish(new Error('无法启动浏览器朗读'), true); }
+  }
+  signal.addEventListener('abort', stop, { once: true });
+  advance();
   return {
-    stop,
+    pause() {
+      if (settled || paused) return;
+      paused = true;
+      clearResumeTimer();
+      current?.suspend();
+      if (!current) return;
+      try { nativePaused = true; synth.pause(); }
+      catch { finish(new Error('无法暂停浏览器朗读'), true); }
+    },
+    resume() {
+      if (settled || !paused) return;
+      paused = false;
+      try {
+        if (nativePaused) {
+          synth.resume();
+          if (current && synth.paused) {
+            resumeTimer = setTimeout(() => {
+              if (synth.paused) finish(new Error('无法继续浏览器朗读，请重试'), true);
+              else nativePaused = false;
+            }, 4000);
+          } else nativePaused = false;
+        }
+        if (current) current.arm(); else next();
+      } catch { finish(new Error('无法继续浏览器朗读，请重试'), true); }
+    },
     finished,
   };
 }
@@ -166,29 +274,53 @@ export function unlockSpeech() {
 }
 
 /** HTMLAudio 的保音调倍速不会像 AudioBufferSource 一样把声音拉尖。 */
-function playPreparedSpeech(clip: PreparedSpeech | null | undefined, rate: number, signal: AbortSignal): SpeakHandle {
+function playPreparedSpeech(clip: PreparedSpeech | null | undefined, rate: number, signal: AbortSignal): SpeechPlayback {
   if (!clip) throw new Error('音频尚未准备好，请稍等');
-  if (signal.aborted) return { stop: () => {}, finished: Promise.resolve() };
   const audio = getPlayer();
   audio.pause();
   audio.src = clip.url;
   audio.currentTime = 0;
   audio.playbackRate = Math.max(0.5, Math.min(2, rate));
   let settled = false;
+  let paused = false;
+  let playAttempt = 0;
   let resolveFinished!: () => void;
   let rejectFinished!: (err: Error) => void;
   const finished = new Promise<void>((resolve, reject) => { resolveFinished = resolve; rejectFinished = reject; });
   const finish = (err?: Error) => {
     if (settled) return;
     settled = true;
-    audio.pause();
     audio.removeEventListener('ended', ended); audio.removeEventListener('error', failed); signal.removeEventListener('abort', stop);
+    audio.pause();
     if (err) rejectFinished(err); else resolveFinished();
   };
   const ended = () => finish();
   const failed = () => finish(new Error('音频播放失败，请重新准备语音'));
   const stop = () => finish();
+  const play = (error: string) => {
+    const attempt = ++playAttempt;
+    const failed = () => {
+      // A deliberate pause may reject the pending play(). Ignore that old
+      // attempt, including when the same audio element is already playing again.
+      if (!settled && !paused && !signal.aborted && attempt === playAttempt) finish(new Error(error));
+    };
+    try { void audio.play().catch(failed); } catch { failed(); }
+  };
   audio.addEventListener('ended', ended); audio.addEventListener('error', failed); signal.addEventListener('abort', stop, { once: true });
-  void audio.play().catch(() => { if (!signal.aborted) finish(new Error('浏览器暂未允许播放，请再次点击播放')); });
-  return { stop, finished };
+  play('浏览器暂未允许播放，请再次点击播放');
+  return {
+    pause() {
+      if (settled || paused) return;
+      if (audio.ended) { finish(); return; }
+      paused = true;
+      audio.pause();
+    },
+    resume() {
+      if (settled || !paused) return;
+      if (audio.ended) { finish(); return; }
+      paused = false;
+      play('无法继续播放语音，请重试');
+    },
+    finished,
+  };
 }

@@ -42,6 +42,7 @@ try {
   if (err) console.log('错误：', await page.locator('.scene-section .error-text').innerText());
   else {
     console.log('验算：', (await page.locator('.scene-player .badge').innerText().catch(() => '无')).trim());
+    await page.getByLabel('播放选项', { exact: true }).click();
     const voice = page.getByRole('button', { name: '关闭朗读' });
     if (await voice.count()) await voice.click();
     const steps = await page.locator('.step-dots .dot').count();

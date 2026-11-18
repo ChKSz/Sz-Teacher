@@ -11,11 +11,15 @@ export function SceneSection(props: {
   settings: PublicSettings | null;
   onRecord: (record: SceneRecord) => void;
   onAsk?: (stepNo: number, stepText: string) => void;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const [status, setStatus] = useState<'idle' | 'working' | 'error'>('idle');
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
   const [open, setOpen] = useState(true);
+  const onOpenChange = props.onOpenChange;
+  const hasRecord = Boolean(props.record);
+  useEffect(() => { onOpenChange?.(hasRecord && open); }, [onOpenChange, hasRecord, open]);
   const [elapsed, setElapsed] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);

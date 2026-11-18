@@ -65,6 +65,7 @@ function MessageItem({
   onRetry?: () => void;
   busy: boolean;
 }) {
+  const [sceneOpen, setSceneOpen] = useState(Boolean(message.scene));
   const actions = <>
     <button className="msg-action" disabled={busy || !onRetry} onClick={onRetry} title="使用原问题和图片重新请求"><RotateCw size={14} aria-hidden="true" />重试请求</button>
     <CopyButton text={message.content} />
@@ -95,21 +96,28 @@ function MessageItem({
       </div>
     );
   }
+  const answer = <>
+    <Markdown text={message.content} />
+    <div className="msg-actions">
+      <SpeakButton text={message.content} settings={settings} />
+      {actions}
+    </div>
+  </>;
   return (
     <div className={`msg assistant ${message.status === 'error' ? 'is-error' : ''}`}>
       <div className="avatar"><Logo size={30} /></div>
       <div className="bubble">
-        <Markdown text={message.content} />
-        <div className="msg-actions">
-          <SpeakButton text={message.content} settings={settings} />
-          {actions}
-        </div>
+        {sceneOpen ? <details className="scene-original-answer">
+          <summary>查看原解答</summary>
+          {answer}
+        </details> : answer}
         {message.status === 'done' && (sceneable || message.scene) && (
           <SceneSection
             messageId={message.id}
             record={message.scene}
             settings={settings}
             onRecord={(record) => onScene(message.id, record)}
+            onOpenChange={setSceneOpen}
             onAsk={onAsk ? (no, text) => onAsk(stepQuestion(no, text)) : undefined}
           />
         )}

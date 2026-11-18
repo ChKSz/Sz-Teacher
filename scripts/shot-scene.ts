@@ -32,6 +32,7 @@ await page.goto(fs.existsSync(path.join(dist, 'web/preview.html')) ? url : url.r
 await page.waitForFunction(() => typeof window.__setScene === 'function');
 await page.evaluate((s) => window.__setScene!(s), scene);
 await page.locator('.scene-canvas').waitFor();
+await page.getByLabel('播放选项', { exact: true }).click();
 const voice = page.getByRole('button', { name: '关闭朗读' });
 if (await voice.count()) await voice.click();
 fs.mkdirSync(outDir, { recursive: true });

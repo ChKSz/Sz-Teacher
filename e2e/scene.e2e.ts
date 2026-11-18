@@ -16,7 +16,7 @@ let page: Page;
 
 before(async () => {
   server = await startE2EServer();
-  browser = await chromium.launch({ executablePath: process.env.BROWSER_PATH ?? EDGE.find((p) => fs.existsSync(p)), headless: true });
+  browser = await chromium.launch({ executablePath: process.env.BROWSER_PATH ?? EDGE.find((p) => fs.existsSync(p)), headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   fs.mkdirSync(SHOT_DIR, { recursive: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   page = await context.newPage();
@@ -36,6 +36,14 @@ after(async () => {
   await server?.close();
 });
 
+async function silence() {
+  const options = page.getByLabel('播放选项', { exact: true });
+  await options.click();
+  const voice = page.getByRole('button', { name: '关闭朗读', exact: true });
+  if (await voice.count()) await voice.click();
+  else await options.click();
+}
+
 test('示例讲解：每个示例都能画出图形并逐步播放', async () => {
   await page.getByRole('button', { name: '示例讲解', exact: true }).click();
   await page.locator('.scene-canvas').waitFor();
@@ -53,8 +61,7 @@ test('示例讲解：每个示例都能画出图形并逐步播放', async () =>
     }
 
     // 关闭朗读（无头浏览器没有语音），逐步点"下一步"
-    const voice = page.getByRole('button', { name: '关闭朗读' });
-    if (await voice.count()) await voice.click();
+    await silence();
     for (let s = 0; s < scene.steps.length; s += 1) {
       await page.getByRole('tab', { name: `第 ${s + 1} 步` }).click();
       await page.locator('.step-no', { hasText: `第 ${s + 1}/${scene.steps.length} 步` }).waitFor();
@@ -91,10 +98,11 @@ test('拖动滑块时动点跟着移动，实时数值随之变化', async () =>
 
 test('自动播放能从头走到最后一步', async () => {
   await page.getByRole('tab', { name: EXAMPLES[2]!.title }).click();
-  await page.getByRole('button', { name: '播放' }).click();
+  await silence();
+  await page.getByRole('button', { name: '无声播放', exact: true }).click();
   const last = EXAMPLES[2]!.steps.length;
   await page.locator('.step-no', { hasText: `第 ${last}/${last} 步` }).waitFor({ timeout: 30_000 });
-  await page.locator('.play-btn', { hasText: '重新讲' }).waitFor({ timeout: 15_000 });
+  await page.locator('.play-btn', { hasText: '无声播放' }).waitFor({ timeout: 15_000 });
 });
 
 test('手机尺寸下播放器可用', async () => {
@@ -107,27 +115,31 @@ test('手机尺寸下播放器可用', async () => {
   assert.ok(box && box.width <= 390 && box.width > 300, '画布应适应手机宽度');
 });
 
-test('暂停后重播当前步骤再继续，最后一步暂停也不会跳回开头', async () => {
+test('暂停后从动画当前位置继续，最后一步暂停也不会跳回开头', async () => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole('tab', { name: EXAMPLES[0]!.title }).click();
+  await silence();
+  await page.getByLabel('播放选项', { exact: true }).click();
   await page.getByRole('button', { name: '回到开头', exact: true }).click();
-  await page.getByRole('button', { name: '播放', exact: true }).click();
+  await page.getByRole('button', { name: '无声播放', exact: true }).click();
   await page.locator('.step-no', { hasText: '第 1/7 步' }).waitFor();
-  await page.waitForTimeout(250);
+  await page.waitForFunction(() => Number(document.querySelector<HTMLInputElement>('.param-slider input')?.value) > 1);
   await page.getByRole('button', { name: '暂停', exact: true }).click();
   const pausedValue = await page.getByRole('slider').inputValue();
   await page.waitForTimeout(500);
   assert.equal(await page.getByRole('slider').inputValue(), pausedValue, '暂停后图形应保持不动');
-  await page.getByRole('button', { name: '重播本步并继续', exact: true }).click();
-  await page.waitForTimeout(1600);
-  assert.match(await page.locator('.step-no').innerText(), /第 1\/7 步/, '应重播第一步，不能直接跳到第二步');
+  await page.getByRole('button', { name: '继续', exact: true }).click();
+  assert.ok(Number(await page.getByRole('slider').inputValue()) >= Number(pausedValue), '继续不能把动点重置到起点');
+  await page.waitForTimeout(400);
+  assert.ok(Number(await page.getByRole('slider').inputValue()) > Number(pausedValue), '继续后动点应当继续运动');
   await page.getByRole('button', { name: '暂停', exact: true }).click();
 
   await page.getByRole('tab', { name: '第 6 步', exact: true }).click();
-  await page.getByRole('button', { name: '播放', exact: true }).click();
-  await page.locator('.step-no', { hasText: '第 7/7 步' }).waitFor({ timeout: 10_000 });
   await page.getByRole('button', { name: '暂停', exact: true }).click();
-  await page.getByRole('button', { name: '重播本步并继续', exact: true }).click();
+  await page.getByRole('button', { name: '继续', exact: true }).click();
+  await page.locator('.step-no', { hasText: '第 7/7 步' }).waitFor({ timeout: 20_000 });
+  await page.getByRole('button', { name: '暂停', exact: true }).click();
+  await page.getByRole('button', { name: '继续', exact: true }).click();
   assert.match(await page.locator('.step-no').innerText(), /第 7\/7 步/);
   await page.getByRole('button', { name: '暂停', exact: true }).click();
 });
@@ -137,7 +149,8 @@ test('手机可全屏看图，通过文字目录跳转，退出后保留步骤',
   await page.getByRole('button', { name: '全屏看图' }).click();
   const dialog = page.getByRole('dialog', { name: '全屏动画讲解' });
   await dialog.waitFor();
-  await page.getByText('步骤目录 · 7 步', { exact: true }).click();
+  await dialog.getByLabel('播放选项', { exact: true }).click();
+  await dialog.getByText('跳到指定步骤', { exact: true }).click();
   await page.locator('.step-directory li').nth(2).getByRole('button').click();
   await page.locator('.step-no', { hasText: '第 3/7 步' }).waitFor();
   await page.screenshot({ path: path.join(SHOT_DIR, 'scene-fullscreen-mobile.png') });

@@ -45,6 +45,7 @@ async function run(scheme: 'light' | 'dark', width: number, height: number, tag:
 
   await page.getByRole('button', { name: '生成动画讲解' }).first().click();
   await page.locator('.msg.assistant .scene-player').first().waitFor({ timeout: 20_000 });
+  await page.getByLabel('播放选项', { exact: true }).first().click();
   const voice = page.getByRole('button', { name: '关闭朗读' });
   if (await voice.count()) await voice.first().click();
   await page.getByRole('tab', { name: '第 3 步' }).first().click();

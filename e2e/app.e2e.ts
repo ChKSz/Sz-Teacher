@@ -91,6 +91,11 @@ test('设置密码 → 提问 → 流式回答 → 追问 → 刷新后记录还
   await page.getByRole('button', { name: '生成动画讲解' }).first().click();
   await page.locator('.msg.assistant .scene-player').first().waitFor({ timeout: 20_000 });
   await page.locator('.msg.assistant .badge.ok').first().waitFor();
+  const originalAnswer = page.locator('.scene-original-answer').first();
+  assert.equal(await originalAnswer.locator('.markdown').isVisible(), false);
+  await originalAnswer.getByText('查看原解答').click();
+  assert.equal(await originalAnswer.locator('.markdown').isVisible(), true);
+  await originalAnswer.getByText('查看原解答').click();
   await page.screenshot({ path: path.join(SHOT_DIR, '2b-scene-inline.png') });
   await page.reload();
   await page.locator('.msg.assistant .scene-player').first().waitFor();
@@ -441,6 +446,7 @@ test('完整语音提前准备并缓存，倍速保留音调，回复灰显与�
     await page.getByRole('tab', { name: '第 1 步', exact: true }).click();
     await page.getByRole('tab', { name: '第 2 步', exact: true }).click();
     await page.getByRole('button', { name: '重播这一步', exact: true }).click();
+    await page.getByLabel('播放选项', { exact: true }).click();
     await page.getByRole('button', { name: '关闭朗读', exact: true }).click();
     assert.equal(audioCount(), readyCount, '步骤跳转和重播只使用已备好的音频');
     await page.reload();
